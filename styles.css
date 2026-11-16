@@ -164,3 +164,9 @@ label.f { display: flex; flex-direction: column; gap: 4px; font-size: 13px; colo
 .nut .top b { font-weight: 600; }
 .macro { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: var(--chip); }
 .macro i { display: block; height: 100%; }
+
+.photo-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); flex: none; }
+.chip .mini { width: 20px; height: 20px; object-fit: cover; border-radius: 4px; vertical-align: -5px; margin-right: 4px; }
+.chip .muted { font-size: 12px; }
+pre.ocr { white-space: pre-wrap; font-size: 12px; background: var(--bg); padding: 8px; border-radius: 8px; max-height: 200px; overflow: auto; }

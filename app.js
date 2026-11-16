@@ -5,6 +5,7 @@ const STORE = 'energia.v1';
 const DEFAULT_SETTINGS = {
   waterGoal: 2000, glassMl: 250, sleepGoal: 7.5,
   supplements: ['Multivitamínico', 'Vitamina D', 'Magnesio', 'Omega 3'],
+  caffLimit: 400, bedtime: '23:00',
   nut: { kcal: 2200, prot: 90, carb: 250, sugar: 50, fat: 70, sat: 20, fib: 30, na: 2300 },
 };
 // Nutrientes en el mismo orden que los valores de foods.js.
@@ -21,7 +22,27 @@ const MEAL_TAGS = [
   ['harinas', '🍞 Harinas refinadas'], ['azucar', '🍬 Azúcar/dulce'], ['procesado', '🍟 Procesado'],
   ['frito', '🍳 Frito/grasoso'], ['lacteos', '🥛 Lácteos'], ['abundante', '😮‍💨 Muy abundante'],
 ];
-const CAFF = [['Café', '☕'], ['Té', '🍵'], ['Energética', '⚡'], ['Refresco cola', '🥤']];
+// Productos con cafeína de inicio (mg por unidad). El usuario puede editarlos o agregar los suyos.
+const DEFAULT_CAFF = [
+  { id: 'sedalmerck', n: 'Sedalmerck', u: '1 tableta', mg: 50, other: 'Paracetamol 500 mg, Fenilefrina 5 mg' },
+  { id: 'alka-boost', n: 'Alka-Seltzer Boost', u: '1 tableta', mg: 65, other: 'Ácido acetilsalicílico 500 mg' },
+  { id: 'sedalmerck-max', n: 'Sedalmerck Max', u: '1 tableta', mg: 65, other: 'Paracetamol 650 mg' },
+  { id: 'cafe', n: 'Café americano', u: '1 taza (240 ml)', mg: 95, other: '' },
+  { id: 'espresso', n: 'Espresso', u: '1 shot', mg: 63, other: '' },
+  { id: 'cafe-soluble', n: 'Café soluble', u: '1 cucharadita', mg: 60, other: '' },
+  { id: 'te-negro', n: 'Té negro', u: '1 taza', mg: 47, other: '' },
+  { id: 'te-verde', n: 'Té verde', u: '1 taza', mg: 28, other: '' },
+  { id: 'cola-lata', n: 'Refresco de cola', u: '1 lata (355 ml)', mg: 34, other: '' },
+  { id: 'cola-600', n: 'Refresco de cola', u: '600 ml', mg: 57, other: '' },
+  { id: 'energetica', n: 'Bebida energética', u: '1 lata (250 ml)', mg: 80, other: '' },
+  { id: 'energetica-grande', n: 'Bebida energética grande', u: '1 lata (473 ml)', mg: 160, other: '' },
+  { id: 'chocolate', n: 'Chocolate oscuro', u: '30 g', mg: 20, other: '' },
+];
+// Registros anteriores (sin mg guardados)
+const LEGACY_CAFF_MG = { 'Café': 95, 'Té': 40, 'Energética': 80, 'Refresco cola': 34 };
+const CAFF_HALF_LIFE = 5; // horas, promedio en adultos
+const ANALG_RE = /paracetamol|acetaminof|acetilsalic|aspirina|ibuprofeno|naproxeno/i;
+const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 const EX_TYPES = ['Caminar', 'Cardio', 'Pesas', 'Deporte', 'Yoga/estiramiento', 'Otro'];
 const SYMPTOMS = ['Dolor de cabeza', 'Niebla mental', 'Somnolencia', 'Ansiedad', 'Irritabilidad',
   'Antojos', 'Digestión pesada', 'Dolor muscular', 'Sin motivación', 'Tristeza'];
@@ -39,6 +60,7 @@ if (!S || typeof S !== 'object') S = {};
 S.days ||= {};
 S.experiments ||= [];
 S.customFoods ||= [];
+S.caffProducts ||= DEFAULT_CAFF.map(p => ({ ...p }));
 S.settings = { ...DEFAULT_SETTINGS, ...(S.settings || {}) };
 S.settings.nut = { ...DEFAULT_SETTINGS.nut, ...S.settings.nut };
 
@@ -49,7 +71,8 @@ let outcome = 'energy';
 const draft = {
   ci: { mood: 0, energy: 0, note: '', t: '' },
   meal: { type: '', tags: [], desc: '', t: '', q: '', items: [] },
-  food: { n: '', u: '1 porción', v: ['', '', '', '', '', '', '', ''] },
+  food: { n: '', u: '1 porción', v: ['', '', '', '', '', '', '', ''], photo: '', status: '', ocr: '' },
+  cp: { id: '', n: '', u: '1 unidad', mg: '', other: '', photo: '', status: '', ocr: '' },
   caff: { t: '' },
   ex: { kind: 'Caminar', min: '', int: 2, t: '' },
 };
@@ -131,6 +154,28 @@ function dayNut(d) {
 function fmtN(x, unit) { return unit === 'kcal' || unit === 'mg' ? String(Math.round(x)) : r1(x); }
 function fmtQ(q) { return String(Math.round(q * 100) / 100); }
 
+// ---------- Cafeína ----------
+function hmToMin(t) { const [h, m] = (t || '00:00').split(':').map(Number); return h * 60 + m; }
+function entryMg(x) { return (x.mg ?? LEGACY_CAFF_MG[x.kind] ?? 0) * (x.q || 1); }
+// "Paracetamol 500 mg, Fenilefrina 5 mg" → [{ n, mg }]
+function parseOther(s) {
+  return [...String(s || '').matchAll(/([A-Za-zÁÉÍÓÚáéíóúñÑ.\- ]+?)\s*(\d+(?:[.,]\d+)?)\s*mg/g)]
+    .map(m => ({ n: m[1].replace(/^[\s,;]+/, '').trim(), mg: +m[2].replace(',', '.') })).filter(o => o.n);
+}
+function bedMin() { const b = hmToMin(S.settings.bedtime); return b < 12 * 60 ? b + 1440 : b; }
+// Cafeína que queda en el cuerpo a cierto minuto del día (vida media ~5 h)
+function caffAt(d, min) {
+  return d.caffeine.reduce((s, x) => {
+    const dt = min - hmToMin(x.t);
+    return dt < 0 ? s : s + entryMg(x) * Math.pow(0.5, dt / 60 / CAFF_HALF_LIFE);
+  }, 0);
+}
+function dayCaff(d) {
+  const others = {};
+  d.caffeine.forEach(x => parseOther(x.other).forEach(o => (others[o.n] = (others[o.n] || 0) + o.mg * (x.q || 1))));
+  return { mg: d.caffeine.reduce((s, x) => s + entryMg(x), 0), bed: caffAt(d, bedMin()), others };
+}
+
 function dayFlags(d) {
   return {
     lateCaff: d.caffeine.some(x => x.t >= LATE_CAFF),
@@ -155,6 +200,9 @@ function metrics(k) {
     wakeups: d.sleep.bed ? (d.sleep.wakeups || 0) : null,
     waterL: d.water ? d.water / 1000 : null,
     caffeine: d.caffeine.length,
+    caffMg: dayCaff(d).mg,
+    caffBed: dayCaff(d).bed,
+    analg: d.caffeine.some(x => ANALG_RE.test(x.other || '')),
     lateCaff: dayFlags(d).lateCaff,
     exMin: d.exercise.reduce((a, x) => a + (+x.min || 0), 0),
     sun: d.sun,
@@ -166,7 +214,7 @@ function metrics(k) {
     supps: Object.fromEntries(S.settings.supplements.map(s => [s, !!d.supps[s]])),
     symptoms: d.symptoms.length,
     nut: dayNut(d),
-    prev: pf ? { lateCaff: pf.lateCaff, lateDinner: pf.lateDinner, alcohol: p.alcohol, screens: !!p.screens } : null,
+    prev: pf ? { caffBed: dayCaff(p).bed, lateCaff: pf.lateCaff, lateDinner: pf.lateDinner, alcohol: p.alcohol, screens: !!p.screens } : null,
   };
 }
 
@@ -182,8 +230,13 @@ function factors() {
       less: 'Los despertares te afectan: evita líquidos, alcohol y cenas pesadas 2–3 h antes de dormir.' },
     { label: 'Agua', unit: ' L', get: m => m.waterL,
       more: 'Rindes mejor hidratado: toma un vaso grande al despertar y carga una botella todo el día.' },
-    { label: 'Bebidas con cafeína', unit: '', get: m => m.caffeine,
-      less: 'Más cafeína coincide con menos energía (efecto rebote): prueba bajar a 1–2 al día y no en ayunas.' },
+    { label: 'Cafeína total', unit: ' mg', get: m => m.caffMg,
+      more: 'Los días con más cafeína te sientes mejor, pero ojo con la dependencia: no subas la dosis y córtala temprano.',
+      less: 'Más cafeína coincide con menos energía (efecto rebote): prueba bajar a 1–2 tomas al día y no en ayunas.' },
+    { label: 'Cafeína al dormir (noche anterior)', unit: ' mg', get: m => m.prev ? m.prev.caffBed : null,
+      less: 'La cafeína que sigue en tu cuerpo al dormir te quita energía al día siguiente: tu última toma, mínimo 8 h antes de acostarte.' },
+    { label: 'Analgésicos con cafeína', bool: true, get: m => m.analg,
+      less: 'Los días con analgésicos con cafeína te sientes peor; usarlos seguido puede causar dolor de cabeza por rebote. Coméntalo con tu médico.' },
     { label: 'Cafeína después de las 3 pm', bool: true, get: m => m.lateCaff,
       less: 'Corta la cafeína a partir de las 2–3 pm durante una semana y compara.' },
     { label: 'Cafeína tarde (día anterior)', bool: true, get: m => m.prev?.lateCaff,
@@ -306,8 +359,14 @@ function summaryCard(d) {
   if (waterPct >= 1) add('good', '💧', `Meta de agua cumplida (${r1(d.water / 1000)} L).`);
   else if (hourNow >= 14 && waterPct < 0.5) add('bad', '💧', `Vas en ${r1(d.water / 1000)} L de ${r1(st.waterGoal / 1000)} L.`);
 
-  if (d.caffeine.some(x => x.t >= LATE_CAFF)) add('bad', '☕', 'Cafeína después de las 3 pm: puede afectar tu sueño de hoy.');
-  if (d.caffeine.length >= 4) add('bad', '☕', `${d.caffeine.length} bebidas con cafeína.`);
+  if (d.caffeine.length) {
+    const cf = dayCaff(d);
+    if (cf.mg > st.caffLimit) add('bad', '☕', `Cafeína: ${Math.round(cf.mg)} mg (límite ${st.caffLimit} mg).`);
+    if (cf.bed >= 50) add('bad', '🌙', `A tu hora de dormir (${st.bedtime}) aún tendrás ~${Math.round(cf.bed)} mg de cafeína en el cuerpo.`);
+    else if (d.caffeine.some(x => x.t >= LATE_CAFF)) add('bad', '☕', 'Cafeína después de las 3 pm: puede afectar tu sueño de hoy.');
+    const para = Object.entries(cf.others).find(([n]) => /paracetamol|acetaminof/i.test(n));
+    if (para && para[1] > 3000) add('bad', '💊', `Llevas ${Math.round(para[1])} mg de paracetamol hoy: no pases de 3000–4000 mg al día.`);
+  }
 
   if (d.meals.length) {
     if (!d.meals.some(m => m.type === 'Desayuno') && hourNow >= 12) add('bad', '🍳', 'Sin desayuno registrado.');
@@ -505,17 +564,54 @@ function nutritionCard(n, title, note = '') {
 }
 
 function caffCard(d) {
+  const st = S.settings, cf = dayCaff(d);
+  const pct = Math.min(100, cf.mg / st.caffLimit * 100);
+  const others = Object.entries(cf.others);
   return `
   <section class="card">
-    <h2>☕ Cafeína<span class="sub">${d.caffeine.length} hoy</span></h2>
+    <h2>☕ Cafeína<span class="sub">${Math.round(cf.mg)} mg hoy</span></h2>
     <div class="row">
-      <input type="time" data-draft="caff.t" value="${esc(draft.caff.t || nowHM())}" aria-label="Hora">
-      ${CAFF.map(([n, ic]) => `<button data-act="caff-add" data-v="${n}">${ic} ${n}</button>`).join('')}
+      <label class="f">Hora<input type="time" data-draft="caff.t" value="${esc(draft.caff.t || nowHM())}"></label>
+      <span class="muted grow">Toca un producto para registrarlo a esa hora.</span>
     </div>
-    ${d.caffeine.length ? `<ul class="list">${sortByTime(d.caffeine).map(x => `
-      <li><span class="t">${esc(x.t)}</span><span class="grow">${esc(x.kind)}${x.t >= LATE_CAFF ? ' <span class="tag neg">tarde</span>' : ''}</span>
+    <div class="chips mt">${S.caffProducts.map(p => `<button class="chip" data-act="caff-add" data-id="${esc(p.id)}">${p.photo ? `<img class="mini" src="${p.photo}" alt="">` : ''}${esc(p.n)} <span class="muted">${esc(p.u)} · ${p.mg} mg</span></button>`).join('')}</div>
+    <button class="link mt" style="padding-left:0" data-act="cp-new">📷 Agregar otro producto (pre-entreno, suplemento…) con foto de la etiqueta</button>
+    ${d.caffeine.length ? `
+    <div class="nut"><div class="top"><b>Total</b><span>${Math.round(cf.mg)} mg <span class="muted">/ ${st.caffLimit} límite</span></span></div>
+      <div class="bar"><i style="width:${pct}%;background:${cf.mg > st.caffLimit ? 'var(--bad)' : cf.mg > st.caffLimit * 0.8 ? 'var(--warn)' : 'var(--accent)'}"></i></div></div>
+    ${caffCurve(d)}
+    ${others.length ? `<p class="muted">Otros activos hoy: ${others.map(([n, mg]) => `<b>${esc(n)} ${Math.round(mg)} mg</b>`).join(' · ')}</p>` : ''}
+    <ul class="list">${sortByTime(d.caffeine).map(x => `
+      <li><span class="t">${esc(x.t)}</span><span class="grow">${esc(x.kind)} <span class="muted">${x.u ? esc(x.u) + ' · ' : ''}${Math.round(entryMg(x))} mg</span>${x.t >= LATE_CAFF ? ' <span class="tag neg">tarde</span>' : ''}</span>
       <button class="link" data-act="del" data-list="caffeine" data-id="${x.id}" aria-label="Borrar">✕</button></li>`).join('')}</ul>` : ''}
   </section>`;
+}
+
+// Curva de cafeína en el cuerpo a lo largo del día, hasta la hora de dormir
+function caffCurve(d) {
+  const W = 320, H = 110, P = 18;
+  const first = Math.min(...d.caffeine.map(x => hmToMin(x.t)));
+  const x0 = Math.min(first, 7 * 60), x1 = Math.max(bedMin() + 60, 24 * 60);
+  const pts = [];
+  for (let m = x0; m <= x1; m += 10) pts.push([m, caffAt(d, m)]);
+  const peak = Math.max(100, ...pts.map(p => p[1]));
+  const x = m => P + (m - x0) / (x1 - x0) * (W - 2 * P);
+  const y = v => H - P - v / peak * (H - 2 * P);
+  const path = pts.map(([m, v], i) => `${i ? 'L' : 'M'}${x(m).toFixed(1)},${y(v).toFixed(1)}`).join('');
+  const bx = x(bedMin()), bed = caffAt(d, bedMin());
+  const nowM = cur === todayKey() ? hmToMin(nowHM()) : null;
+  const lbl = m => `${pad(Math.floor(m / 60) % 24)}:00`;
+  return `<svg class="chart mt" viewBox="0 0 ${W} ${H}" role="img" aria-label="Cafeína en el cuerpo durante el día">
+    <path d="${path}L${x(x1)},${H - P}L${x(x0)},${H - P}Z" fill="var(--accent-soft)"/>
+    <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    <line x1="${bx}" x2="${bx}" y1="${P / 2}" y2="${H - P}" stroke="var(--mood)" stroke-dasharray="3 3"/>
+    <text x="${bx - 3}" y="${P}" font-size="10" fill="var(--mood)" text-anchor="end">🛏️ ${Math.round(bed)} mg</text>
+    ${nowM != null && nowM >= x0 && nowM <= x1 ? `<circle cx="${x(nowM)}" cy="${y(caffAt(d, nowM))}" r="3.5" fill="var(--text)"/>` : ''}
+    <text x="${P}" y="${H - 4}" font-size="10" fill="var(--muted)">${lbl(x0)}</text>
+    <text x="${W - P}" y="${H - 4}" font-size="10" fill="var(--muted)" text-anchor="end">${lbl(x1)}</text>
+    <text x="${P}" y="${P}" font-size="10" fill="var(--muted)">${Math.round(peak)} mg</text>
+  </svg>
+  <p class="muted" style="margin:4px 0 0">Cafeína en tu cuerpo (se elimina la mitad cada ~${CAFF_HALF_LIFE} h). A las ${esc(S.settings.bedtime)} tendrás ~<b>${Math.round(bed)} mg</b>${bed >= 50 ? ': suficiente para afectar tu sueño profundo.' : '.'}</p>`;
 }
 
 function suppCard(d) {
@@ -632,6 +728,55 @@ function nutritionAnalysis(rows) {
   </section>`;
 }
 
+// ----- Análisis: cafeína acumulada -----
+function caffeineAnalysis(rows) {
+  const cr = rows.filter(r => S.days[r.k].caffeine.length);
+  if (!cr.length) return '';
+  const st = S.settings;
+  const src = {}, others = {};
+  cr.forEach(r => S.days[r.k].caffeine.forEach(x => {
+    const s = (src[x.kind] ||= { n: x.kind, times: 0, mg: 0 });
+    s.times += x.q || 1; s.mg += entryMg(x);
+    parseOther(x.other).forEach(o => (others[o.n] = (others[o.n] || 0) + o.mg * (x.q || 1)));
+  }));
+  const sources = Object.values(src).sort((a, b) => b.mg - a.mg);
+  const total = sources.reduce((s, x) => s + x.mg, 0);
+  const analgDays = cr.filter(r => r.analg).length;
+
+  // Barras de mg por día con la línea del límite
+  const W = 320, H = 110, P = 18, n = cr.length;
+  const max = Math.max(st.caffLimit * 1.2, ...cr.map(r => r.caffMg));
+  const bw = Math.min(24, (W - 2 * P) / n * 0.7);
+  const x = i => P + (n === 1 ? (W - 2 * P) / 2 : i / (n - 1) * (W - 2 * P - bw) + bw / 2);
+  const h = v => v / max * (H - 2 * P);
+  const ly = H - P - h(st.caffLimit);
+  const chart = n > 1 ? `<svg class="chart mt" viewBox="0 0 ${W} ${H}" role="img" aria-label="Cafeína por día">
+    ${cr.map((r, i) => `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${(H - P - h(r.caffMg)).toFixed(1)}" width="${bw.toFixed(1)}" height="${h(r.caffMg).toFixed(1)}" rx="2" fill="${r.caffMg > st.caffLimit ? 'var(--bad)' : 'var(--accent)'}"/>
+      <rect x="${(x(i) - bw / 2).toFixed(1)}" y="${(H - P - h(r.caffBed)).toFixed(1)}" width="${bw.toFixed(1)}" height="${h(r.caffBed).toFixed(1)}" rx="2" fill="var(--mood)" opacity=".8"/>`).join('')}
+    <line x1="${P}" x2="${W - P}" y1="${ly}" y2="${ly}" stroke="var(--muted)" stroke-dasharray="3 3"/>
+    <text x="${W - P}" y="${ly - 3}" font-size="10" fill="var(--muted)" text-anchor="end">límite ${st.caffLimit} mg</text>
+    <text x="${P}" y="${H - 4}" font-size="10" fill="var(--muted)">${esc(fmtDate(cr[0].k, { day: 'numeric', month: 'short' }))}</text>
+    <text x="${W - P}" y="${H - 4}" font-size="10" fill="var(--muted)" text-anchor="end">${esc(fmtDate(cr[n - 1].k, { day: 'numeric', month: 'short' }))}</text>
+  </svg>
+  <div class="legend"><span><i style="background:var(--accent)"></i>mg en el día</span><span><i style="background:var(--mood)"></i>mg que quedan al dormir</span></div>` : '';
+
+  return `
+  <section class="card">
+    <h2>☕ Cafeína<span class="sub">${cr.length} días con registro</span></h2>
+    <div class="stats">
+      <div class="stat"><b>${Math.round(mean(cr.map(r => r.caffMg)))} mg</b><span>Promedio por día</span></div>
+      <div class="stat"><b>${Math.round(mean(cr.map(r => r.caffBed)))} mg</b><span>Promedio al dormir</span></div>
+      <div class="stat"><b>${cr.filter(r => r.caffMg > st.caffLimit).length} / ${cr.length}</b><span>Días sobre el límite</span></div>
+      <div class="stat"><b>${analgDays} / ${cr.length}</b><span>Días con analgésico con cafeína</span></div>
+    </div>
+    ${chart}
+    <h3>De dónde viene tu cafeína</h3>
+    <ul class="list">${sources.map(s => `<li><span class="grow">${esc(s.n)} <span class="muted">× ${fmtQ(s.times)}</span></span><span class="muted">${Math.round(s.mg)} mg · ${Math.round(s.mg / total * 100)}%</span></li>`).join('')}</ul>
+    ${Object.keys(others).length ? `<h3>Otros activos en el periodo</h3><ul class="list">${Object.entries(others).map(([k, mg]) => `<li><span class="grow">${esc(k)}</span><span class="muted">${mg >= 1000 ? r1(mg / 1000) + ' g' : Math.round(mg) + ' mg'}</span></li>`).join('')}</ul>` : ''}
+    ${analgDays >= 8 ? `<div class="flag bad mt"><span>💊</span><span>Tomaste analgésicos con cafeína ${analgDays} días en este periodo. Usarlos más de 10–15 días al mes puede causar dolor de cabeza por rebote y más cansancio. Vale la pena comentarlo con tu médico.</span></div>` : ''}
+  </section>`;
+}
+
 // ----- Análisis -----
 function viewAnalisis() {
   const all = Object.keys(S.days).sort().map(metrics).filter(Boolean);
@@ -660,7 +805,7 @@ function viewAnalisis() {
       <div class="stat"><b>${r1(avg(r => r.sleepH))} h</b><span>Sueño</span></div>
       <div class="stat"><b>${r1(avg(r => r.sleepQ))}</b><span>Calidad sueño</span></div>
       <div class="stat"><b>${r1(avg(r => r.waterL))} L</b><span>Agua</span></div>
-      <div class="stat"><b>${r1(avg(r => r.caffeine))}</b><span>Cafeína / día</span></div>
+      <div class="stat"><b>${fmtN(avg(r => r.caffMg) ?? 0, 'mg')} mg</b><span>Cafeína / día</span></div>
       <div class="stat"><b>${r1(avg(r => r.exMin))} min</b><span>Ejercicio</span></div>
       <div class="stat"><b>${r1(avg(r => r.stress))}</b><span>Estrés (1–5)</span></div>
     </div>
@@ -704,7 +849,7 @@ function viewAnalisis() {
     <p class="muted mt">Cambia una sola cosa a la vez durante 1–2 semanas, así sabrás qué funcionó.</p>
   </section>` : '';
 
-  return head + stats + nutritionAnalysis(rows) + factorsCard + recCard + timeOfDayCard(rows) + experimentsCard() + symptomsCard(rows) + suppAdherenceCard(rows) + healthCard();
+  return head + stats + nutritionAnalysis(rows) + caffeineAnalysis(rows) + factorsCard + recCard + timeOfDayCard(rows) + experimentsCard() + symptomsCard(rows) + suppAdherenceCard(rows) + healthCard();
 }
 
 function trendChart(rows) {
@@ -831,8 +976,11 @@ function viewAjustes() {
       <label class="f">Agua diaria (ml)<input type="number" min="500" step="250" data-setting="waterGoal" value="${st.waterGoal}" style="width:120px"></label>
       <label class="f">Tamaño de vaso (ml)<input type="number" min="50" step="50" data-setting="glassMl" value="${st.glassMl}" style="width:120px"></label>
       <label class="f">Sueño (horas)<input type="number" min="4" max="12" step="0.5" data-setting="sleepGoal" value="${st.sleepGoal}" style="width:100px"></label>
+      <label class="f">Cafeína máx. (mg)<input type="number" min="50" step="25" data-setting="caffLimit" value="${st.caffLimit}" style="width:110px"></label>
+      <label class="f">Hora habitual de dormir<input type="time" data-setting-str="bedtime" value="${esc(st.bedtime)}"></label>
     </div>
   </section>
+  ${caffProductsCard()}
   <section class="card">
     <h2>💊 Mis suplementos</h2>
     <ul class="list">${st.supplements.map(s => `<li><span class="grow">${esc(s)}</span><button class="link danger" data-act="supp-del" data-v="${esc(s)}">Quitar</button></li>`).join('')}</ul>
@@ -846,7 +994,8 @@ function viewAjustes() {
   <section class="card" id="custom-foods">
     <h2>🥫 Mis alimentos</h2>
     <p class="muted" style="margin-top:0">Agrega lo que comes seguido y no aparece en el buscador. Los valores vienen en la etiqueta nutrimental.</p>
-    <div class="row">
+    ${photoPicker('food')}
+    <div class="row mt">
       <label class="f grow">Nombre<input data-draft="food.n" value="${esc(draft.food.n)}" placeholder="ej. Yogur Lala griego"></label>
       <label class="f grow">Porción<input data-draft="food.u" value="${esc(draft.food.u)}" placeholder="ej. 1 vaso, 100 g"></label>
     </div>
@@ -868,6 +1017,125 @@ function viewAjustes() {
   </section>`;
 }
 
+function caffProductsCard() {
+  const c = draft.cp;
+  return `
+  <section class="card" id="caff-products">
+    <h2>☕ Mis productos con cafeína</h2>
+    <p class="muted" style="margin-top:0">Toma o elige una foto de la etiqueta (fórmula o tabla nutrimental) y la app intentará leer los mg de cafeína y otros ingredientes. Revisa siempre los valores.</p>
+    ${photoPicker('cp')}
+    <div class="row mt">
+      <label class="f grow">Nombre<input data-draft="cp.n" value="${esc(c.n)}" placeholder="ej. Pre-entreno C4"></label>
+      <label class="f">Porción<input data-draft="cp.u" value="${esc(c.u)}" placeholder="1 scoop" style="width:120px"></label>
+      <label class="f">Cafeína (mg)<input type="number" min="0" step="any" data-draft="cp.mg" value="${esc(c.mg)}" style="width:100px"></label>
+    </div>
+    <label class="f mt">Otros ingredientes activos (opcional)<input data-draft="cp.other" value="${esc(c.other)}" placeholder="ej. Paracetamol 500 mg, Beta-alanina 1600 mg"></label>
+    <div class="row mt">
+      <button class="primary" data-act="cp-save">${c.id ? 'Guardar cambios' : 'Guardar producto'}</button>
+      ${c.id || c.n || c.photo ? '<button data-act="cp-cancel">Cancelar</button>' : ''}
+    </div>
+    <ul class="list">${S.caffProducts.map(p => `<li>
+      ${p.photo ? `<img class="thumb" src="${p.photo}" alt="">` : ''}
+      <span class="grow"><b>${esc(p.n)}</b> <span class="muted">${esc(p.u)} · ${p.mg} mg</span>${p.other ? `<br><span class="muted">${esc(p.other)}</span>` : ''}</span>
+      <button class="link" data-act="cp-edit" data-id="${esc(p.id)}">Editar</button>
+      <button class="link danger" data-act="cp-del" data-id="${esc(p.id)}">Quitar</button></li>`).join('')}</ul>
+    <button class="link mt" data-act="cp-reset">Restaurar productos de inicio</button>
+  </section>`;
+}
+
+// ---------- Foto de etiqueta + lectura (OCR) ----------
+function photoPicker(target) {
+  const t = draft[target];
+  return `<div class="photo-row">
+    <label class="btn">📷 Foto de la etiqueta<input type="file" accept="image/*" data-photo="${target}" hidden></label>
+    ${t.photo ? `<img class="thumb" src="${t.photo}" alt="Foto de la etiqueta">` : ''}
+    <span class="muted grow" id="ocr-${target}">${esc(t.status)}</span>
+  </div>
+  ${t.ocr ? `<details class="mt"><summary class="muted">Texto leído de la foto</summary><pre class="ocr">${esc(t.ocr)}</pre></details>` : ''}`;
+}
+
+function loadScript(src) {
+  return new Promise((ok, fail) => {
+    if (document.querySelector(`script[src="${src}"]`)) return ok();
+    const s = document.createElement('script');
+    s.src = src; s.onload = ok; s.onerror = fail;
+    document.head.appendChild(s);
+  });
+}
+
+// Devuelve una miniatura para guardar y una imagen más grande para leer el texto
+async function prepareImage(file) {
+  const img = await createImageBitmap(file);
+  const draw = max => {
+    const k = Math.min(1, max / Math.max(img.width, img.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return c;
+  };
+  return { thumb: draw(240).toDataURL('image/jpeg', 0.7), big: draw(1800) };
+}
+
+// Busca valores comunes en el texto de una etiqueta (en español)
+function parseLabel(text) {
+  const t = norm(text).replace(/(\d),(\d)/g, '$1.$2').replace(/\s+/g, ' ');
+  const num = '(\\d+(?:\\.\\d+)?)';
+  const find = (re) => { const m = t.match(re); return m ? +m[1] : null; };
+  const out = {
+    caf: find(new RegExp(`cafeina[^0-9]{0,40}${num}\\s*mg`)),
+    kcal: find(new RegExp(`${num}\\s*kcal`)) ?? find(new RegExp(`(?:contenido energetico|energia)[^0-9]{0,30}${num}`)),
+    prot: find(new RegExp(`proteinas?[^0-9]{0,25}${num}\\s*g`)),
+    carb: find(new RegExp(`(?:carbohidratos|hidratos de carbono)[^0-9]{0,30}${num}\\s*g`)),
+    sugar: find(new RegExp(`azucares[^0-9]{0,25}${num}\\s*g`)),
+    fat: find(new RegExp(`(?:grasas? totales|lipidos|grasas?)[^0-9]{0,25}${num}\\s*g`)),
+    sat: find(new RegExp(`saturadas?[^0-9]{0,25}${num}\\s*g`)),
+    fib: find(new RegExp(`fibra[^0-9]{0,25}${num}\\s*g`)),
+    na: find(new RegExp(`sodio[^0-9]{0,25}${num}\\s*mg`)),
+  };
+  const actives = ['paracetamol', 'acetaminofen', 'acido acetilsalicilico', 'fenilefrina', 'taurina', 'beta.?alanina',
+    'creatina', '(?:l.?)?teanina', '(?:l.?)?citrulina', '(?:l.?)?arginina', '(?:l.?)?tirosina', 'yohimbina', 'guarana', 'teacrina', 'niacina'];
+  out.other = actives.map(a => {
+    const m = t.match(new RegExp(`(${a})[^0-9]{0,30}${num}\\s*(mg|g)\\b`));
+    return m ? `${m[1].replace(/^./, c => c.toUpperCase())} ${m[3] === 'g' ? +m[2] * 1000 : +m[2]} mg` : null;
+  }).filter(Boolean).join(', ');
+  return out;
+}
+
+async function readLabel(file, target) {
+  const t = draft[target];
+  const setStatus = s => { t.status = s; const el = document.getElementById('ocr-' + target); if (el) el.textContent = s; };
+  let big;
+  try {
+    const img = await prepareImage(file);
+    t.photo = img.thumb; big = img.big;
+  } catch (e) { return setStatus('No se pudo abrir la imagen.'); }
+  t.ocr = '';
+  render();
+  setStatus('Leyendo la etiqueta… la primera vez descarga el lector (~10 MB), puede tardar.');
+  try {
+    await loadScript(TESSERACT_URL);
+    const worker = await Tesseract.createWorker('spa');
+    const { data } = await worker.recognize(big);
+    await worker.terminate();
+    const p = parseLabel(data.text);
+    t.ocr = data.text.trim();
+    // Si no tiene nombre, propone la primera línea con texto
+    if (!t.n.trim()) t.n = (t.ocr.split('\n').find(l => /[a-záéíóúñ]{4,}/i.test(l)) || '').trim().slice(0, 40);
+    let found = 0;
+    if (target === 'cp') {
+      if (p.caf != null) { t.mg = String(p.caf); found++; }
+      if (p.other) { t.other = p.other; found++; }
+    } else {
+      ['kcal', 'prot', 'carb', 'sugar', 'fat', 'sat', 'fib', 'na'].forEach((k, i) => { if (p[k] != null) { t.v[i] = String(p[k]); found++; } });
+    }
+    t.status = found ? `Detecté ${found} valor(es). Revísalos contra la foto antes de guardar.` : 'No encontré valores claros. Captúralos a mano viendo la foto.';
+  } catch (e) {
+    t.status = 'No se pudo leer la foto (¿sin internet?). La foto quedó guardada; captura los valores a mano.';
+  }
+  render();
+  document.getElementById(target === 'cp' ? 'caff-products' : 'custom-foods')?.scrollIntoView();
+}
+
 // ---------- Exportar ----------
 function download(name, text, type) {
   const a = document.createElement('a');
@@ -877,16 +1145,17 @@ function download(name, text, type) {
 }
 function toCSV() {
   const supps = S.settings.supplements;
-  const head = ['fecha', 'energia', 'animo', 'checkins', 'sueno_h', 'calidad_sueno', 'despertares', 'agua_l', 'cafeina', 'cafeina_tarde',
+  const head = ['fecha', 'energia', 'animo', 'checkins', 'sueno_h', 'calidad_sueno', 'despertares', 'agua_l', 'cafeina_tomas', 'cafeina_mg', 'cafeina_al_dormir_mg', 'cafeina_tarde',
     'ejercicio_min', 'sol_min', 'estres', 'alcohol', 'pantallas_noche', 'comidas', 'desayuno', ...MEAL_TAGS.map(t => 'comida_' + t[0]),
-    ...supps.map(s => 'sup_' + s), ...NUTR.map(([k, , u]) => `${k}_${u}`), 'sintomas', 'detalle_comidas', 'notas'];
+    ...supps.map(s => 'sup_' + s), ...NUTR.map(([k, , u]) => `${k}_${u}`), 'sintomas', 'detalle_comidas', 'detalle_cafeina', 'notas'];
   const q = v => { const s = v == null ? '' : String(v); return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const lines = Object.keys(S.days).sort().filter(k => hasData(S.days[k])).map(k => {
     const d = S.days[k], m = metrics(k);
-    return [k, r1(m.energy), r1(m.mood), d.checkins.length, r1(m.sleepH), m.sleepQ, m.wakeups, r1(m.waterL), m.caffeine, m.lateCaff ? 1 : 0,
+    return [k, r1(m.energy), r1(m.mood), d.checkins.length, r1(m.sleepH), m.sleepQ, m.wakeups, r1(m.waterL), m.caffeine, Math.round(m.caffMg), Math.round(m.caffBed), m.lateCaff ? 1 : 0,
       m.exMin, m.sun, m.stress, m.alcohol, d.screens ? 1 : 0, m.meals, m.breakfast == null ? '' : m.breakfast ? 1 : 0,
       ...MEAL_TAGS.map(t => m.tags[t[0]] ?? ''), ...supps.map(s => d.supps[s] ? 1 : 0), ...NUTR.map((_, i) => m.nut ? r1(m.nut[i]) : ''), d.symptoms.join(' | '),
-      sortByTime(d.meals).map(x => `${x.t} ${x.type}: ${x.desc}`).join(' | '), d.notes].map(v => q(v === '—' ? '' : v)).join(',');
+      sortByTime(d.meals).map(x => `${x.t} ${x.type}: ${x.desc}`).join(' | '),
+      sortByTime(d.caffeine).map(x => `${x.t} ${x.kind} ${Math.round(entryMg(x))} mg`).join(' | '), d.notes].map(v => q(v === '—' ? '' : v)).join(',');
   });
   return [head.map(q).join(','), ...lines].join('\n');
 }
@@ -952,8 +1221,8 @@ document.addEventListener('click', e => {
       const f = draft.food;
       if (!f.n.trim()) return toast('Ponle nombre al alimento');
       if (f.v[0] === '') return toast('Indica al menos las calorías');
-      S.customFoods.push({ n: f.n.trim(), u: f.u.trim() || '1 porción', v: f.v.map(x => +x || 0), fl: '' });
-      draft.food = { n: '', u: '1 porción', v: ['', '', '', '', '', '', '', ''] };
+      S.customFoods.push({ n: f.n.trim(), u: f.u.trim() || '1 porción', v: f.v.map(x => +x || 0), fl: '', photo: f.photo || '' });
+      draft.food = { n: '', u: '1 porción', v: ['', '', '', '', '', '', '', ''], photo: '', status: '', ocr: '' };
       return commit('Alimento guardado ✓ Ya aparece en el buscador');
     }
     case 'food-del':
@@ -969,10 +1238,45 @@ document.addEventListener('click', e => {
       return commit('Comida agregada ✓');
     }
 
-    case 'caff-add':
-      d.caffeine.push({ id: uid(), t: draft.caff.t || nowHM(), kind: v });
+    case 'caff-add': {
+      const p = S.caffProducts.find(p => p.id === el.dataset.id);
+      if (!p) return;
+      d.caffeine.push({ id: uid(), t: draft.caff.t || nowHM(), kind: p.n, u: p.u, mg: p.mg, other: p.other || '' });
       draft.caff.t = '';
-      return commit(`${v} registrado ✓`);
+      return commit(`${p.n} registrado ✓ (${p.mg} mg)`);
+    }
+    case 'cp-new':
+      draft.cp = { id: '', n: '', u: '1 unidad', mg: '', other: '', photo: '', status: '', ocr: '' };
+      tab = 'ajustes'; render();
+      document.getElementById('caff-products')?.scrollIntoView();
+      return;
+    case 'cp-edit': {
+      const p = S.caffProducts.find(p => p.id === el.dataset.id);
+      draft.cp = { ...p, photo: p.photo || '', status: '', ocr: '' };
+      render(); document.getElementById('caff-products')?.scrollIntoView();
+      return;
+    }
+    case 'cp-cancel': draft.cp = { id: '', n: '', u: '1 unidad', mg: '', other: '', photo: '', status: '', ocr: '' }; render(); return;
+    case 'cp-save': {
+      const c = draft.cp;
+      if (!c.n.trim()) return toast('Ponle nombre al producto');
+      if (c.mg === '' || !(+c.mg >= 0)) return toast('Indica los mg de cafeína por unidad');
+      const p = { id: c.id || uid(), n: c.n.trim(), u: c.u.trim() || '1 unidad', mg: +c.mg, other: c.other.trim(), photo: c.photo || '' };
+      const i = S.caffProducts.findIndex(x => x.id === p.id);
+      if (i >= 0) S.caffProducts[i] = p; else S.caffProducts.unshift(p);
+      draft.cp = { id: '', n: '', u: '1 unidad', mg: '', other: '', photo: '', status: '', ocr: '' };
+      return commit('Producto guardado ✓ Ya aparece en Cafeína');
+    }
+    case 'cp-del':
+      if (confirm('¿Quitar este producto? (lo ya registrado no cambia)')) { S.caffProducts = S.caffProducts.filter(p => p.id !== el.dataset.id); commit(); }
+      return;
+    case 'cp-reset':
+      if (confirm('¿Restaurar los productos de inicio? Tus productos propios se conservan.')) {
+        const ids = new Set(S.caffProducts.map(p => p.id));
+        S.caffProducts.push(...DEFAULT_CAFF.filter(p => !ids.has(p.id)).map(p => ({ ...p })));
+        commit('Listo ✓');
+      }
+      return;
 
     case 'supp':
       if (d.supps[v]) delete d.supps[v]; else d.supps[v] = nowHM();
@@ -1032,7 +1336,7 @@ document.addEventListener('click', e => {
       return;
     case 'wipe':
       if (confirm('¿Borrar TODOS tus registros? No se puede deshacer.') && confirm('¿Seguro? Te recomiendo descargar un respaldo antes.')) {
-        S = { days: {}, experiments: [], customFoods: S.customFoods, settings: { ...S.settings } }; commit('Datos borrados');
+        S = { days: {}, experiments: [], customFoods: S.customFoods, caffProducts: S.caffProducts, settings: { ...S.settings } }; commit('Datos borrados');
       }
       return;
   }
@@ -1056,6 +1360,10 @@ document.addEventListener('change', e => {
   } else if (el.dataset.setting) {
     const n = +el.value;
     if (n > 0) { S.settings[el.dataset.setting] = n; commit('Guardado ✓'); }
+  } else if (el.dataset.settingStr) {
+    if (el.value) { S.settings[el.dataset.settingStr] = el.value; commit('Guardado ✓'); }
+  } else if (el.dataset.photo && el.files[0]) {
+    readLabel(el.files[0], el.dataset.photo);
   } else if (el.dataset.nut) {
     const n = +el.value;
     if (n > 0) { S.settings.nut[el.dataset.nut] = n; commit('Guardado ✓'); }
@@ -1067,6 +1375,7 @@ document.addEventListener('change', e => {
         if (!data.days) throw new Error();
         if (!confirm('Esto reemplazará tus datos actuales con el respaldo. ¿Continuar?')) return;
         S = { days: data.days, experiments: data.experiments || [], customFoods: data.customFoods || [],
+          caffProducts: data.caffProducts || DEFAULT_CAFF.map(p => ({ ...p })),
           settings: { ...DEFAULT_SETTINGS, ...data.settings, nut: { ...DEFAULT_SETTINGS.nut, ...data.settings?.nut } } };
         commit('Respaldo restaurado ✓');
       } catch (err) { toast('Archivo no válido'); }
