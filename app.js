@@ -5,7 +5,16 @@ const STORE = 'energia.v1';
 const DEFAULT_SETTINGS = {
   waterGoal: 2000, glassMl: 250, sleepGoal: 7.5,
   supplements: ['Multivitamínico', 'Vitamina D', 'Magnesio', 'Omega 3'],
+  nut: { kcal: 2200, prot: 90, carb: 250, sugar: 50, fat: 70, sat: 20, fib: 30, na: 2300 },
 };
+// Nutrientes en el mismo orden que los valores de foods.js.
+// goal = conviene llegar; limit = conviene no pasarse; range = referencia
+const NUTR = [
+  ['kcal', 'Calorías', 'kcal', 'range'], ['prot', 'Proteína', 'g', 'goal'], ['carb', 'Carbohidratos', 'g', 'range'],
+  ['sugar', 'Azúcares', 'g', 'limit'], ['fat', 'Grasa', 'g', 'range'], ['sat', 'Grasa saturada', 'g', 'limit'],
+  ['fib', 'Fibra', 'g', 'goal'], ['na', 'Sodio', 'mg', 'limit'],
+];
+const FLAG_TAGS = { h: 'harinas', a: 'azucar', p: 'procesado', f: 'frito', v: 'verduras', i: 'integral', l: 'lacteos' };
 const MEAL_TYPES = ['Desayuno', 'Colación', 'Comida', 'Merienda', 'Cena'];
 const MEAL_TAGS = [
   ['proteina', '🥩 Proteína'], ['verduras', '🥦 Verdura/fruta'], ['integral', '🌾 Integral'],
@@ -29,7 +38,9 @@ try { S = JSON.parse(localStorage.getItem(STORE)); } catch (e) { S = null; }
 if (!S || typeof S !== 'object') S = {};
 S.days ||= {};
 S.experiments ||= [];
+S.customFoods ||= [];
 S.settings = { ...DEFAULT_SETTINGS, ...(S.settings || {}) };
+S.settings.nut = { ...DEFAULT_SETTINGS.nut, ...S.settings.nut };
 
 let tab = 'hoy';
 let cur = todayKey();
@@ -37,7 +48,8 @@ let range = 30;
 let outcome = 'energy';
 const draft = {
   ci: { mood: 0, energy: 0, note: '', t: '' },
-  meal: { type: '', tags: [], desc: '', t: '' },
+  meal: { type: '', tags: [], desc: '', t: '', q: '', items: [] },
+  food: { n: '', u: '1 porción', v: ['', '', '', '', '', '', '', ''] },
   caff: { t: '' },
   ex: { kind: 'Caminar', min: '', int: 2, t: '' },
 };
@@ -93,6 +105,32 @@ function sleepHours(s) {
   if (m <= 0) m += 1440;
   return m / 60;
 }
+// ---------- Nutrición ----------
+function norm(s) { return String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+function allFoods() { return [...S.customFoods.map(f => ({ ...f, custom: true })), ...FOODS]; }
+function searchFoods(q) {
+  const words = norm(q).split(/\s+/).filter(w => w.length > 1 && !['de', 'con', 'la', 'el', 'una', 'un'].includes(w));
+  if (!words.length) return [];
+  return allFoods().map(f => {
+    const name = norm(f.n), all = name + ' ' + norm(f.al || '');
+    // Más puntos si la palabra está en el nombre o al inicio
+    const score = words.reduce((s, w) => s + (name.startsWith(w) ? 3 : name.includes(w) ? 2 : all.includes(w) ? 1 : 0), 0);
+    return { f, score };
+  }).filter(x => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 8).map(x => x.f);
+}
+function sumNut(items) {
+  const t = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (const it of items) it.v.forEach((x, i) => (t[i] += (+x || 0) * it.q));
+  return t;
+}
+// Totales del día o null si ninguna comida tiene alimentos con porción
+function dayNut(d) {
+  const items = d.meals.flatMap(m => m.items || []);
+  return items.length ? sumNut(items) : null;
+}
+function fmtN(x, unit) { return unit === 'kcal' || unit === 'mg' ? String(Math.round(x)) : r1(x); }
+function fmtQ(q) { return String(Math.round(q * 100) / 100); }
+
 function dayFlags(d) {
   return {
     lateCaff: d.caffeine.some(x => x.t >= LATE_CAFF),
@@ -127,6 +165,7 @@ function metrics(k) {
     tags: Object.fromEntries(MEAL_TAGS.map(([t]) => [t, d.meals.length ? tagCount(t) : null])),
     supps: Object.fromEntries(S.settings.supplements.map(s => [s, !!d.supps[s]])),
     symptoms: d.symptoms.length,
+    nut: dayNut(d),
     prev: pf ? { lateCaff: pf.lateCaff, lateDinner: pf.lateDinner, alcohol: p.alcohol, screens: !!p.screens } : null,
   };
 }
@@ -186,6 +225,20 @@ function factors() {
       more: `Te va mejor los días que tomas ${s}: sé constante.`,
       less: `Los días con ${s} no muestran mejor energía; revisa dosis y horario con tu médico.` });
   }
+  const nutTips = {
+    kcal: ['Los días que comes más tienes más energía: quizá estás comiendo poco; no te saltes comidas.',
+      'Comer de más coincide con menos energía: porciones más moderadas, sobre todo a mediodía.'],
+    prot: ['Más proteína = más energía: apunta a 25–30 g en cada comida (huevo, pollo, pescado, frijoles, yogur griego).', null],
+    carb: [null, 'Muchos carbohidratos coinciden con bajones: cambia parte por proteína y verdura.'],
+    sugar: [null, 'Más azúcar = menos energía: quita refrescos, jugos y pan dulce 2 semanas y compara.'],
+    fat: [null, null],
+    sat: [null, 'La grasa saturada alta coincide con peor estado: menos frituras, embutidos y quesos grasos.'],
+    fib: ['La fibra te ayuda: más verdura, frijoles, avena y fruta entera.', null],
+    na: [null, 'Mucho sodio coincide con peor estado: menos procesados, sopas instantáneas y embutidos.'],
+  };
+  NUTR.forEach(([key, label, unit], i) => {
+    f.push({ label: `Nutrición: ${label}`, unit: ' ' + unit, get: m => m.nut ? m.nut[i] : null, more: nutTips[key][0], less: nutTips[key][1] });
+  });
   return f;
 }
 
@@ -264,6 +317,14 @@ function summaryCard(d) {
     if (cnt('verduras')) add('good', '🥦', 'Comiste verdura o fruta.');
     else if (hourNow >= 18) add('bad', '🥦', 'Sin verdura ni fruta hoy.');
     if (cnt('proteina') >= 2) add('good', '🥩', 'Buena presencia de proteína.');
+    const n = dayNut(d), g = st.nut;
+    if (n) {
+      if (n[3] > g.sugar) add('bad', '🍬', `Azúcares: ${Math.round(n[3])} g (límite ${g.sugar} g).`);
+      if (n[7] > g.na) add('bad', '🧂', `Sodio: ${Math.round(n[7])} mg (límite ${g.na} mg).`);
+      if (n[1] >= g.prot) add('good', '🥩', `Meta de proteína cumplida (${Math.round(n[1])} g).`);
+      else if (hourNow >= 18) add('bad', '🥩', `Proteína: ${Math.round(n[1])} g de ${g.prot} g.`);
+      if (hourNow >= 18 && n[6] < g.fib * 0.6) add('bad', '🌾', `Poca fibra: ${Math.round(n[6])} g de ${g.fib} g.`);
+    }
   } else if (hourNow >= 11) add('info', '🍽️', 'Aún no registras comidas.');
 
   const ex = d.exercise.reduce((a, x) => a + (+x.min || 0), 0);
@@ -381,15 +442,66 @@ function mealsCard(d) {
     <div class="chips">${MEAL_TYPES.map(t => `<button class="chip ${m.type === t ? 'on' : ''}" data-act="meal-type" data-v="${t}">${t}</button>`).join('')}</div>
     <div class="row mt">
       <input type="time" data-draft="meal.t" value="${esc(m.t || nowHM())}" aria-label="Hora">
-      <input class="grow" data-draft="meal.desc" value="${esc(m.desc)}" placeholder="¿Qué comiste? ej. 2 tacos de pollo, agua de jamaica">
+      <input class="grow" id="meal-search" type="search" value="${esc(m.q)}" placeholder="Busca: pizza, tacos, refresco…" autocomplete="off">
     </div>
-    <h3>Etiquetas (las que apliquen)</h3>
+    <div id="food-results">${foodResults()}</div>
+    ${m.items.length ? `<ul class="list">${m.items.map((it, i) => `
+      <li><span class="grow"><b>${esc(it.n)}</b><br><span class="muted">${fmtQ(it.q)} × ${esc(it.u)} · ${Math.round(it.v[0] * it.q)} kcal · P ${r1(it.v[1] * it.q)} g · Azúcar ${r1(it.v[3] * it.q)} g</span></span>
+      <span class="row" style="gap:4px;flex-wrap:nowrap">
+        <button class="icon" data-act="item-q" data-i="${i}" data-v="-0.5" aria-label="Menos">−</button>
+        <button class="icon" data-act="item-q" data-i="${i}" data-v="0.5" aria-label="Más">+</button>
+        <button class="link" data-act="item-del" data-i="${i}" aria-label="Quitar">✕</button>
+      </span></li>`).join('')}</ul>
+      <p class="muted" style="margin:6px 0 0">Esta comida: <b>${nutLine(sumNut(m.items))}</b></p>` : ''}
+    <input class="mt" data-draft="meal.desc" value="${esc(m.desc)}" placeholder="Nota o descripción (opcional)">
+    <h3>Etiquetas (se agregan solas según los alimentos; ajusta si quieres)</h3>
     <div class="chips">${MEAL_TAGS.map(([t, l]) => `<button class="chip ${m.tags.includes(t) ? 'on' : ''}" data-act="meal-tag" data-v="${t}">${l}</button>`).join('')}</div>
     <button class="primary mt" data-act="meal-add" style="width:100%">Agregar comida</button>
     ${d.meals.length ? `<ul class="list">${sortByTime(d.meals).map(x => `
-      <li><span class="t">${esc(x.t)}</span><span class="grow"><b>${esc(x.type || 'Comida')}</b> ${esc(x.desc)}<br>${(x.tags || []).map(t => `<span class="tag">${(MEAL_TAGS.find(z => z[0] === t) || [, t])[1]}</span>`).join('')}</span>
+      <li><span class="t">${esc(x.t)}</span><span class="grow"><b>${esc(x.type || 'Comida')}</b> ${esc(x.desc)}
+      ${x.items?.length ? `<br><span class="muted">${nutLine(sumNut(x.items))}</span>` : ''}
+      <br>${(x.tags || []).map(t => `<span class="tag">${(MEAL_TAGS.find(z => z[0] === t) || [, t])[1]}</span>`).join('')}</span>
       <button class="link" data-act="del" data-list="meals" data-id="${x.id}" aria-label="Borrar">✕</button></li>`).join('')}</ul>` : ''}
+    ${nutritionCard(dayNut(d), 'Nutrición del día')}
   </section>`;
+}
+
+let lastResults = [];
+function foodResults() {
+  const q = draft.meal.q.trim();
+  if (!q) return '';
+  lastResults = searchFoods(q);
+  return `<div class="results">${lastResults.map((f, i) => `
+    <button class="result" data-act="food-add" data-i="${i}"><span><b>${esc(f.n)}</b>${f.custom ? ' <span class="tag">mío</span>' : ''}<br><span class="muted">${esc(f.u)}</span></span><span class="muted">${Math.round(f.v[0])} kcal</span></button>`).join('')}
+    <button class="link" data-act="food-new">＋ No está: crear "${esc(q)}" con sus valores</button></div>`;
+}
+
+function nutLine(n) {
+  return `${Math.round(n[0])} kcal · P ${Math.round(n[1])} g · C ${Math.round(n[2])} g · Azúcar ${Math.round(n[3])} g · G ${Math.round(n[4])} g`;
+}
+
+// Barras de cada nutriente contra la meta diaria (n = totales de un día o promedio)
+function nutritionCard(n, title, note = '') {
+  if (!n) return '';
+  const g = S.settings.nut;
+  const bars = NUTR.map(([key, label, unit, kind], i) => {
+    const pct = g[key] ? n[i] / g[key] * 100 : 0;
+    const color = kind === 'limit' ? (pct > 100 ? 'var(--bad)' : pct > 80 ? 'var(--warn)' : 'var(--accent)')
+      : kind === 'goal' ? (pct >= 100 ? 'var(--good)' : 'var(--accent)')
+        : (pct > 115 ? 'var(--bad)' : 'var(--accent)');
+    const word = kind === 'limit' ? 'límite' : kind === 'goal' ? 'meta' : 'ref.';
+    return `<div class="nut">
+      <div class="top"><b>${label}</b><span>${fmtN(n[i], unit)} ${unit} <span class="muted">/ ${g[key]} ${word}</span></span></div>
+      <div class="bar"><i style="width:${Math.min(100, pct)}%;background:${color}"></i></div>
+    </div>`;
+  }).join('');
+  // Reparto de calorías entre proteína, carbohidratos y grasa
+  const kp = n[1] * 4, kc = n[2] * 4, kf = n[4] * 9, kt = kp + kc + kf || 1;
+  return `<h3>📊 ${title}</h3>
+    <div class="macro"><i style="width:${kp / kt * 100}%;background:var(--mood)"></i><i style="width:${kc / kt * 100}%;background:var(--accent)"></i><i style="width:${kf / kt * 100}%;background:var(--warn)"></i></div>
+    <div class="legend"><span><i style="background:var(--mood)"></i>Proteína ${Math.round(kp / kt * 100)}%</span><span><i style="background:var(--accent)"></i>Carbohidratos ${Math.round(kc / kt * 100)}%</span><span><i style="background:var(--warn)"></i>Grasa ${Math.round(kf / kt * 100)}%</span></div>
+    ${bars}
+    <p class="muted" style="margin:8px 0 0">${note || 'Valores aproximados por porción típica. Ajusta tus metas en Ajustes.'}</p>`;
 }
 
 function caffCard(d) {
@@ -461,6 +573,62 @@ function otherCard(d) {
     <div class="chips">${SYMPTOMS.map(s => `<button class="chip ${d.symptoms.includes(s) ? 'on' : ''}" data-act="sym" data-v="${s}">${s}</button>`).join('')}</div>
     <h3>Notas del día</h3>
     <textarea data-bind="notes" placeholder="Eventos, discusiones, viajes, enfermedad, menstruación, medicamentos…">${esc(d.notes)}</textarea>
+  </section>`;
+}
+
+// ----- Análisis: nutrición acumulada -----
+function nutritionAnalysis(rows) {
+  const nr = rows.filter(r => r.nut);
+  if (!nr.length) return `<section class="card"><h2>🍽️ Nutrición</h2><p class="muted" style="margin:0">Cuando registres comidas usando el buscador de alimentos, aquí verás tu promedio diario de calorías, proteína, azúcares y más.</p></section>`;
+  const g = S.settings.nut;
+  const avg = NUTR.map((_, i) => mean(nr.map(r => r.nut[i])));
+  const over = (i, key) => nr.filter(r => r.nut[i] > g[key]).length;
+  const totals = NUTR.map((_, i) => nr.reduce((s, r) => s + r.nut[i], 0));
+
+  // Barras diarias de calorías divididas en proteína / carbohidratos / grasa
+  const W = 320, H = 130, P = 18, n = nr.length;
+  const maxK = Math.max(g.kcal * 1.2, ...nr.map(r => r.nut[1] * 4 + r.nut[2] * 4 + r.nut[4] * 9));
+  const bw = Math.min(24, (W - 2 * P) / n * 0.7);
+  const x = i => P + (n === 1 ? (W - 2 * P) / 2 : i / (n - 1) * (W - 2 * P - bw) + bw / 2);
+  const h = k => k / maxK * (H - 2 * P);
+  const bars = nr.map((r, i) => {
+    let y = H - P;
+    return [[r.nut[1] * 4, 'var(--mood)'], [r.nut[2] * 4, 'var(--accent)'], [r.nut[4] * 9, 'var(--warn)']].map(([k, c]) => {
+      y -= h(k);
+      return `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h(k).toFixed(1)}" fill="${c}"/>`;
+    }).join('');
+  }).join('');
+  const goalY = H - P - h(g.kcal);
+  const chart = `<svg class="chart mt" viewBox="0 0 ${W} ${H}" role="img" aria-label="Calorías por día">
+    ${bars}
+    <line x1="${P}" x2="${W - P}" y1="${goalY}" y2="${goalY}" stroke="var(--muted)" stroke-dasharray="3 3"/>
+    <text x="${W - P}" y="${goalY - 3}" font-size="10" fill="var(--muted)" text-anchor="end">meta ${g.kcal} kcal</text>
+    <text x="${P}" y="${H - 4}" font-size="10" fill="var(--muted)">${esc(fmtDate(nr[0].k, { day: 'numeric', month: 'short' }))}</text>
+    <text x="${W - P}" y="${H - 4}" font-size="10" fill="var(--muted)" text-anchor="end">${esc(fmtDate(nr[n - 1].k, { day: 'numeric', month: 'short' }))}</text>
+  </svg>`;
+
+  // Alimentos que más aportan calorías y azúcar en el periodo
+  const byFood = {};
+  nr.forEach(r => S.days[r.k].meals.forEach(m => (m.items || []).forEach(it => {
+    const f = (byFood[it.n] ||= { n: it.n, times: 0, kcal: 0, sugar: 0 });
+    f.times += it.q; f.kcal += it.v[0] * it.q; f.sugar += it.v[3] * it.q;
+  })));
+  const top = Object.values(byFood).sort((a, b) => b.kcal - a.kcal).slice(0, 8);
+  const topSugar = Object.values(byFood).filter(f => f.sugar > 0).sort((a, b) => b.sugar - a.sugar).slice(0, 5);
+
+  return `
+  <section class="card">
+    <h2>🍽️ Nutrición<span class="sub">${nr.length} días con alimentos</span></h2>
+    <div class="stats">
+      <div class="stat"><b>${over(3, 'sugar')} / ${nr.length}</b><span>Días sobre límite de azúcar</span></div>
+      <div class="stat"><b>${nr.filter(r => r.nut[1] >= g.prot).length} / ${nr.length}</b><span>Días con meta de proteína</span></div>
+      <div class="stat"><b>${over(7, 'na')} / ${nr.length}</b><span>Días sobre límite de sodio</span></div>
+      <div class="stat"><b>${Math.round(totals[3])} g</b><span>Azúcar acumulada</span></div>
+    </div>
+    ${n > 1 ? chart + `<div class="legend"><span><i style="background:var(--mood)"></i>Proteína</span><span><i style="background:var(--accent)"></i>Carbohidratos</span><span><i style="background:var(--warn)"></i>Grasa</span><span>kcal por día</span></div>` : ''}
+    ${nutritionCard(avg, 'Promedio por día', 'Promedio de los días en que registraste alimentos. Valores aproximados.')}
+    ${top.length ? `<h3>🏆 Lo que más calorías te aporta</h3><ul class="list">${top.map(f => `<li><span class="grow">${esc(f.n)} <span class="muted">× ${fmtQ(f.times)}</span></span><span class="muted">${Math.round(f.kcal)} kcal</span></li>`).join('')}</ul>` : ''}
+    ${topSugar.length ? `<h3>🍬 De dónde viene tu azúcar</h3><ul class="list">${topSugar.map(f => `<li><span class="grow">${esc(f.n)} <span class="muted">× ${fmtQ(f.times)}</span></span><span class="muted">${Math.round(f.sugar)} g</span></li>`).join('')}</ul>` : ''}
   </section>`;
 }
 
@@ -536,7 +704,7 @@ function viewAnalisis() {
     <p class="muted mt">Cambia una sola cosa a la vez durante 1–2 semanas, así sabrás qué funcionó.</p>
   </section>` : '';
 
-  return head + stats + factorsCard + recCard + timeOfDayCard(rows) + experimentsCard() + symptomsCard(rows) + suppAdherenceCard(rows) + healthCard();
+  return head + stats + nutritionAnalysis(rows) + factorsCard + recCard + timeOfDayCard(rows) + experimentsCard() + symptomsCard(rows) + suppAdherenceCard(rows) + healthCard();
 }
 
 function trendChart(rows) {
@@ -671,6 +839,22 @@ function viewAjustes() {
     <div class="row mt"><input class="grow" id="new-supp" placeholder="ej. Hierro, B12, Creatina, Ashwagandha"><button class="primary" data-act="supp-new">Agregar</button></div>
   </section>
   <section class="card">
+    <h2>🍽️ Metas de nutrición (por día)</h2>
+    <div class="row">${NUTR.map(([key, label, unit]) => `<label class="f">${label} (${unit})<input type="number" min="0" data-nut="${key}" value="${st.nut[key]}" style="width:110px"></label>`).join('')}</div>
+    <p class="muted">Referencias generales para un adulto. Si tienes un plan de un nutriólogo, usa sus cifras.</p>
+  </section>
+  <section class="card" id="custom-foods">
+    <h2>🥫 Mis alimentos</h2>
+    <p class="muted" style="margin-top:0">Agrega lo que comes seguido y no aparece en el buscador. Los valores vienen en la etiqueta nutrimental.</p>
+    <div class="row">
+      <label class="f grow">Nombre<input data-draft="food.n" value="${esc(draft.food.n)}" placeholder="ej. Yogur Lala griego"></label>
+      <label class="f grow">Porción<input data-draft="food.u" value="${esc(draft.food.u)}" placeholder="ej. 1 vaso, 100 g"></label>
+    </div>
+    <div class="row mt">${NUTR.map(([, label, unit], i) => `<label class="f">${label} (${unit})<input type="number" min="0" step="any" data-draft="food.v.${i}" value="${esc(draft.food.v[i])}" style="width:100px"></label>`).join('')}</div>
+    <button class="primary mt" data-act="food-save">Guardar alimento</button>
+    ${S.customFoods.length ? `<ul class="list">${S.customFoods.map((f, i) => `<li><span class="grow"><b>${esc(f.n)}</b> <span class="muted">${esc(f.u)}</span><br><span class="muted">${nutLine(f.v)}</span></span><button class="link danger" data-act="food-del" data-i="${i}">Quitar</button></li>`).join('')}</ul>` : ''}
+  </section>
+  <section class="card">
     <h2>💾 Tus datos</h2>
     <p class="muted" style="margin-top:0">Todo se guarda solo en este dispositivo. Haz respaldos de vez en cuando.</p>
     <div class="row">
@@ -695,13 +879,13 @@ function toCSV() {
   const supps = S.settings.supplements;
   const head = ['fecha', 'energia', 'animo', 'checkins', 'sueno_h', 'calidad_sueno', 'despertares', 'agua_l', 'cafeina', 'cafeina_tarde',
     'ejercicio_min', 'sol_min', 'estres', 'alcohol', 'pantallas_noche', 'comidas', 'desayuno', ...MEAL_TAGS.map(t => 'comida_' + t[0]),
-    ...supps.map(s => 'sup_' + s), 'sintomas', 'detalle_comidas', 'notas'];
+    ...supps.map(s => 'sup_' + s), ...NUTR.map(([k, , u]) => `${k}_${u}`), 'sintomas', 'detalle_comidas', 'notas'];
   const q = v => { const s = v == null ? '' : String(v); return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const lines = Object.keys(S.days).sort().filter(k => hasData(S.days[k])).map(k => {
     const d = S.days[k], m = metrics(k);
     return [k, r1(m.energy), r1(m.mood), d.checkins.length, r1(m.sleepH), m.sleepQ, m.wakeups, r1(m.waterL), m.caffeine, m.lateCaff ? 1 : 0,
       m.exMin, m.sun, m.stress, m.alcohol, d.screens ? 1 : 0, m.meals, m.breakfast == null ? '' : m.breakfast ? 1 : 0,
-      ...MEAL_TAGS.map(t => m.tags[t[0]] ?? ''), ...supps.map(s => d.supps[s] ? 1 : 0), d.symptoms.join(' | '),
+      ...MEAL_TAGS.map(t => m.tags[t[0]] ?? ''), ...supps.map(s => d.supps[s] ? 1 : 0), ...NUTR.map((_, i) => m.nut ? r1(m.nut[i]) : ''), d.symptoms.join(' | '),
       sortByTime(d.meals).map(x => `${x.t} ${x.type}: ${x.desc}`).join(' | '), d.notes].map(v => q(v === '—' ? '' : v)).join(',');
   });
   return [head.map(q).join(','), ...lines].join('\n');
@@ -738,11 +922,52 @@ document.addEventListener('click', e => {
       const t = draft.meal.tags; const i = t.indexOf(v);
       i >= 0 ? t.splice(i, 1) : t.push(v); render(); return;
     }
-    case 'meal-add':
-      if (!draft.meal.desc.trim() && !draft.meal.type) return toast('Escribe qué comiste');
-      d.meals.push({ id: uid(), t: draft.meal.t || nowHM(), type: draft.meal.type, desc: draft.meal.desc.trim(), tags: draft.meal.tags.slice() });
-      draft.meal = { type: '', tags: [], desc: '', t: '' };
+    case 'food-add': {
+      const f = lastResults[+el.dataset.i];
+      if (!f) return;
+      const m = draft.meal;
+      const same = m.items.find(it => it.n === f.n && it.u === f.u);
+      if (same) same.q += 1; else m.items.push({ n: f.n, u: f.u, q: 1, v: f.v.slice(), fl: f.fl || '' });
+      // Etiquetas automáticas según el alimento
+      for (const c of f.fl || '') if (FLAG_TAGS[c] && !m.tags.includes(FLAG_TAGS[c])) m.tags.push(FLAG_TAGS[c]);
+      const n = sumNut(m.items);
+      if (n[1] >= 15 && !m.tags.includes('proteina')) m.tags.push('proteina');
+      if (n[0] >= 900 && !m.tags.includes('abundante')) m.tags.push('abundante');
+      m.q = '';
+      render();
+      document.getElementById('meal-search')?.focus();
+      return;
+    }
+    case 'item-q': {
+      const it = draft.meal.items[+el.dataset.i];
+      it.q = Math.max(0.5, it.q + +v); render(); return;
+    }
+    case 'item-del': draft.meal.items.splice(+el.dataset.i, 1); render(); return;
+    case 'food-new':
+      draft.food = { n: draft.meal.q.trim(), u: '1 porción', v: ['', '', '', '', '', '', '', ''] };
+      tab = 'ajustes'; render();
+      document.getElementById('custom-foods')?.scrollIntoView();
+      return;
+    case 'food-save': {
+      const f = draft.food;
+      if (!f.n.trim()) return toast('Ponle nombre al alimento');
+      if (f.v[0] === '') return toast('Indica al menos las calorías');
+      S.customFoods.push({ n: f.n.trim(), u: f.u.trim() || '1 porción', v: f.v.map(x => +x || 0), fl: '' });
+      draft.food = { n: '', u: '1 porción', v: ['', '', '', '', '', '', '', ''] };
+      return commit('Alimento guardado ✓ Ya aparece en el buscador');
+    }
+    case 'food-del':
+      if (confirm('¿Quitar este alimento? (las comidas ya registradas no cambian)')) { S.customFoods.splice(+el.dataset.i, 1); commit(); }
+      return;
+    case 'meal-add': {
+      const m = draft.meal;
+      if (!m.desc.trim() && !m.type && !m.items.length) return toast('Busca un alimento o escribe qué comiste');
+      const desc = m.desc.trim() || m.items.map(it => `${fmtQ(it.q)} ${it.n}`).join(', ');
+      d.meals.push({ id: uid(), t: m.t || nowHM(), type: m.type, desc, tags: m.tags.slice(),
+        items: m.items.map(({ n, u, q, v }) => ({ n, u, q, v })) });
+      draft.meal = { type: '', tags: [], desc: '', t: '', q: '', items: [] };
       return commit('Comida agregada ✓');
+    }
 
     case 'caff-add':
       d.caffeine.push({ id: uid(), t: draft.caff.t || nowHM(), kind: v });
@@ -807,7 +1032,7 @@ document.addEventListener('click', e => {
       return;
     case 'wipe':
       if (confirm('¿Borrar TODOS tus registros? No se puede deshacer.') && confirm('¿Seguro? Te recomiendo descargar un respaldo antes.')) {
-        S = { days: {}, experiments: [], settings: { ...S.settings } }; commit('Datos borrados');
+        S = { days: {}, experiments: [], customFoods: S.customFoods, settings: { ...S.settings } }; commit('Datos borrados');
       }
       return;
   }
@@ -815,7 +1040,11 @@ document.addEventListener('click', e => {
 
 document.addEventListener('input', e => {
   const el = e.target;
-  if (el.dataset.draft) setPath(draft, el.dataset.draft, el.value);
+  if (el.id === 'meal-search') {
+    // Solo se actualizan los resultados para no perder el foco del teclado
+    draft.meal.q = el.value;
+    document.getElementById('food-results').innerHTML = foodResults();
+  } else if (el.dataset.draft) setPath(draft, el.dataset.draft, el.value);
   else if (el.dataset.bind && el.tagName === 'TEXTAREA') { setPath(D(), el.dataset.bind, el.value); save(); }
 });
 
@@ -827,6 +1056,9 @@ document.addEventListener('change', e => {
   } else if (el.dataset.setting) {
     const n = +el.value;
     if (n > 0) { S.settings[el.dataset.setting] = n; commit('Guardado ✓'); }
+  } else if (el.dataset.nut) {
+    const n = +el.value;
+    if (n > 0) { S.settings.nut[el.dataset.nut] = n; commit('Guardado ✓'); }
   } else if (el.id === 'import' && el.files[0]) {
     const r = new FileReader();
     r.onload = () => {
@@ -834,7 +1066,8 @@ document.addEventListener('change', e => {
         const data = JSON.parse(r.result);
         if (!data.days) throw new Error();
         if (!confirm('Esto reemplazará tus datos actuales con el respaldo. ¿Continuar?')) return;
-        S = { days: data.days, experiments: data.experiments || [], settings: { ...DEFAULT_SETTINGS, ...data.settings } };
+        S = { days: data.days, experiments: data.experiments || [], customFoods: data.customFoods || [],
+          settings: { ...DEFAULT_SETTINGS, ...data.settings, nut: { ...DEFAULT_SETTINGS.nut, ...data.settings?.nut } } };
         commit('Respaldo restaurado ✓');
       } catch (err) { toast('Archivo no válido'); }
     };

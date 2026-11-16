@@ -11,6 +11,7 @@
   --good-soft: #dcf5e3;
   --bad: #c2410c;
   --bad-soft: #fde9dc;
+  --warn: #d97706;
   --chip: #eef2f1;
   --radius: 14px;
 }
@@ -28,6 +29,7 @@
     --good-soft: #14321f;
     --bad: #fb923c;
     --bad-soft: #3a2214;
+    --warn: #fbbf24;
     --chip: #222d2b;
   }
 }
@@ -153,3 +155,12 @@ label.f { display: flex; flex-direction: column; gap: 4px; font-size: 13px; colo
   opacity: 0; pointer-events: none; transition: .2s; max-width: calc(100% - 32px); z-index: 20;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.results { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.result { display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; background: var(--bg); }
+.result .muted { font-size: 12px; }
+.nut { margin-top: 8px; }
+.nut .top { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; margin-bottom: 3px; }
+.nut .top b { font-weight: 600; }
+.macro { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: var(--chip); }
+.macro i { display: block; height: 100%; }

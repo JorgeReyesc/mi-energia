@@ -1,7 +1,7 @@
 // Cache de la app para que funcione sin internet.
 // Sube el número de versión cuando cambies algún archivo.
-const CACHE = 'mi-energia-v1';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
+const CACHE = 'mi-energia-v2';
+const ASSETS = ['./', './index.html', './styles.css', './app.js', './foods.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
