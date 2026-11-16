@@ -2,6 +2,7 @@
 
 // ---------- Constantes ----------
 const STORE = 'energia.v1';
+const APP_VERSION = '12'; // igual que CACHE en sw.js
 const DEFAULT_SETTINGS = {
   waterGoal: 2000, glassMl: 250, sleepGoal: 7.5,
   supplements: ['Multivitamínico', 'Vitamina D', 'Magnesio', 'Omega 3'],
@@ -1299,7 +1300,7 @@ function viewAjustes() {
   </section>
   <section class="card">
     <h2>💾 Tus datos</h2>
-    <p class="muted" style="margin-top:0">Todo se guarda solo en este dispositivo. Haz respaldos de vez en cuando.</p>
+    <p class="muted" style="margin-top:0">Todo se guarda solo en este dispositivo (lo que captures en la computadora no aparece en el teléfono). Para pasar tus datos: descarga el respaldo en un dispositivo y usa "Restaurar respaldo" en el otro.</p>
     <div class="row">
       <button data-act="export-json">⬇️ Respaldo (JSON)</button>
       <button data-act="export-csv">⬇️ Exportar CSV</button>
@@ -1308,6 +1309,11 @@ function viewAjustes() {
     </div>
     <p class="muted">El CSV lo puedes abrir en Excel o pegarlo en un chat con Claude para un análisis más profundo.</p>
     <button class="danger mt" data-act="wipe">Borrar todos los datos</button>
+  </section>
+  <section class="card">
+    <h2>🔄 Versión de la app</h2>
+    <p class="muted" style="margin-top:0">Versión ${APP_VERSION}. La app se actualiza sola al abrirla con internet; si no ves un cambio reciente, toca el botón.</p>
+    <button data-act="update">Buscar actualización</button>
   </section>`;
 }
 
@@ -1671,6 +1677,15 @@ document.addEventListener('click', e => {
     case 'copy-csv':
       navigator.clipboard.writeText(toCSV()).then(() => toast('CSV copiado ✓'), () => toast('No se pudo copiar'));
       return;
+    case 'update': {
+      toast('Buscando actualización…');
+      navigator.serviceWorker?.getRegistration().then(async reg => {
+        if (reg) await reg.update().catch(() => {});
+        // Si no llega una versión nueva en unos segundos, recarga para tomar los archivos de la red
+        setTimeout(() => location.reload(), 2500);
+      });
+      return;
+    }
     case 'wipe':
       if (confirm('¿Borrar TODOS tus registros? No se puede deshacer.') && confirm('¿Seguro? Te recomiendo descargar un respaldo antes.')) {
         S = { days: {}, experiments: [], customFoods: S.customFoods, caffProducts: S.caffProducts, settings: { ...S.settings } }; commit('Datos borrados');
@@ -1755,5 +1770,15 @@ document.addEventListener('visibilitychange', () => {
 render();
 navigator.storage?.persist?.();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Si ya había una versión instalada, al llegar la nueva se recarga sola una vez
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    reloading = true; location.reload();
+  });
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    // Al volver a abrir la app, revisa si hay versión nueva
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(() => {});
 }
