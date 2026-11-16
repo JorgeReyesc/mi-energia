@@ -2,7 +2,7 @@
 
 // ---------- Constantes ----------
 const STORE = 'energia.v1';
-const APP_VERSION = '12'; // igual que CACHE en sw.js
+const APP_VERSION = '13'; // igual que CACHE en sw.js
 const DEFAULT_SETTINGS = {
   waterGoal: 2000, glassMl: 250, sleepGoal: 7.5,
   supplements: ['Multivitamínico', 'Vitamina D', 'Magnesio', 'Omega 3'],
@@ -193,6 +193,8 @@ const draft = {
 };
 
 function save() {
+  // Sincronización (sync.js): marca qué cambió y programa el envío
+  if (typeof stampChanges === 'function') { stampChanges(); scheduleSync(); }
   try { localStorage.setItem(STORE, JSON.stringify(S)); }
   catch (e) { toast('⚠️ No se pudo guardar'); }
 }
@@ -1298,9 +1300,10 @@ function viewAjustes() {
     <button class="primary mt" data-act="food-save">Guardar alimento</button>
     ${S.customFoods.length ? `<ul class="list">${S.customFoods.map((f, i) => `<li><span class="grow"><b>${esc(f.n)}</b> <span class="muted">${esc(f.u)}</span><br><span class="muted">${nutLine(f.v)}</span></span><button class="link danger" data-act="food-del" data-i="${i}">Quitar</button></li>`).join('')}</ul>` : ''}
   </section>
+  ${typeof syncCard === 'function' ? syncCard() : ''}
   <section class="card">
     <h2>💾 Tus datos</h2>
-    <p class="muted" style="margin-top:0">Todo se guarda solo en este dispositivo (lo que captures en la computadora no aparece en el teléfono). Para pasar tus datos: descarga el respaldo en un dispositivo y usa "Restaurar respaldo" en el otro.</p>
+    <p class="muted" style="margin-top:0">Todo se guarda solo en este dispositivo (si no usas la sincronización, lo que captures en la computadora no aparece en el teléfono). El respaldo sirve para guardar una copia o pasar tus datos a mano.</p>
     <div class="row">
       <button data-act="export-json">⬇️ Respaldo (JSON)</button>
       <button data-act="export-csv">⬇️ Exportar CSV</button>
@@ -1688,7 +1691,9 @@ document.addEventListener('click', e => {
     }
     case 'wipe':
       if (confirm('¿Borrar TODOS tus registros? No se puede deshacer.') && confirm('¿Seguro? Te recomiendo descargar un respaldo antes.')) {
-        S = { days: {}, experiments: [], customFoods: S.customFoods, caffProducts: S.caffProducts, settings: { ...S.settings } }; commit('Datos borrados');
+        S = { days: {}, experiments: [], customFoods: S.customFoods, caffProducts: S.caffProducts, settings: { ...S.settings },
+          ui: S.ui, _u: S._u, _wiped: Date.now() };
+        commit('Datos borrados');
       }
       return;
   }
