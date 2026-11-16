@@ -24,8 +24,8 @@ const MEAL_TAGS = [
 ];
 // Productos con cafeína de inicio (mg por unidad). El usuario puede editarlos o agregar los suyos.
 const DEFAULT_CAFF = [
-  { id: 'sedalmerck', n: 'Sedalmerck', u: '1 tableta', mg: 50, other: 'Paracetamol 500 mg, Fenilefrina 5 mg' },
-  { id: 'alka-boost', n: 'Alka-Seltzer Boost', u: '1 tableta', mg: 65, other: 'Ácido acetilsalicílico 500 mg' },
+  { id: 'sedalmerck', n: 'Sedalmerck', u: '2 tabletas', mg: 100, other: 'Paracetamol 1000 mg, Fenilefrina 10 mg' },
+  { id: 'alka-boost', n: 'Alka-Seltzer Boost', u: '2 tabletas', mg: 130, other: 'Ácido acetilsalicílico 1000 mg' },
   { id: 'sedalmerck-max', n: 'Sedalmerck Max', u: '1 tableta', mg: 65, other: 'Paracetamol 650 mg' },
   { id: 'cafe', n: 'Café americano', u: '1 taza (240 ml)', mg: 95, other: '' },
   { id: 'espresso', n: 'Espresso', u: '1 shot', mg: 63, other: '' },
@@ -61,6 +61,11 @@ S.days ||= {};
 S.experiments ||= [];
 S.customFoods ||= [];
 S.caffProducts ||= DEFAULT_CAFF.map(p => ({ ...p }));
+// Pasa Sedalmerck y Alka-Seltzer Boost de 1 a 2 tabletas si siguen con el valor de inicio anterior
+for (const p of S.caffProducts) {
+  const def = DEFAULT_CAFF.find(d => d.id === p.id);
+  if (def && def.u === '2 tabletas' && p.u === '1 tableta' && p.mg * 2 === def.mg) Object.assign(p, { u: def.u, mg: def.mg, other: def.other });
+}
 S.settings = { ...DEFAULT_SETTINGS, ...(S.settings || {}) };
 S.settings.nut = { ...DEFAULT_SETTINGS.nut, ...S.settings.nut };
 
