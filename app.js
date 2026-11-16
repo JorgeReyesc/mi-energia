@@ -43,7 +43,28 @@ const DEFAULT_CAFF = [
 const LEGACY_CAFF_MG = { 'Café': 95, 'Té': 40, 'Energética': 80, 'Refresco cola': 34 };
 const CAFF_HALF_LIFE = 5; // horas, promedio en adultos
 const ANALG_RE = /paracetamol|acetaminof|acetilsalic|aspirina|ibuprofeno|naproxeno/i;
-const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+// Referencias diarias para adultos de otros activos (mg/día).
+// limit = máximo diario recomendado sin receta; usual = dosis habitual en suplementos (no es un límite de seguridad)
+const ACTIVES = [
+  { n: 'Paracetamol', re: /paracetamol|acetaminof/, ref: 3000, kind: 'limit', note: 'máx. sin receta; nunca más de 4000 mg' },
+  { n: 'Ácido acetilsalicílico', re: /acetilsalic|aspirina/, ref: 4000, kind: 'limit', note: 'máx. sin receta' },
+  { n: 'Ibuprofeno', re: /ibuprofeno/, ref: 1200, kind: 'limit', note: 'máx. sin receta' },
+  { n: 'Naproxeno', re: /naproxeno/, ref: 660, kind: 'limit', note: 'máx. sin receta' },
+  { n: 'Fenilefrina', re: /fenilefrina/, ref: 60, kind: 'limit', note: 'máx. oral al día' },
+  { n: 'Taurina', re: /taurina/, ref: 3000, kind: 'limit', note: 'nivel seguro observado' },
+  { n: 'Niacina', re: /niacina/, ref: 35, kind: 'limit', note: 'máx. tolerable en suplementos' },
+  { n: 'Beta-alanina', re: /beta.?alanina/, ref: 6400, kind: 'usual', note: 'dosis usual: 3.2–6.4 g' },
+  { n: 'L-citrulina', re: /citrulina/, ref: 8000, kind: 'usual', note: 'dosis usual: 6–8 g' },
+  { n: 'Creatina', re: /creatina/, ref: 5000, kind: 'usual', note: 'dosis usual: 3–5 g' },
+  { n: 'L-arginina', re: /arginina/, ref: 9000, kind: 'usual', note: 'dosis usual: hasta 9 g' },
+  { n: 'L-tirosina', re: /tirosina/, ref: 2000, kind: 'usual', note: 'dosis usual: 0.5–2 g' },
+  { n: 'L-teanina', re: /teanina/, ref: 400, kind: 'usual', note: 'dosis usual: 100–400 mg' },
+];
+function activeInfo(name) {
+  const k = norm(name);
+  return ACTIVES.find(a => a.re.test(k)) || { n: name.replace(/^./, c => c.toUpperCase()), ref: null };
+}
+const TESSERACT_URL ='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 const EX_TYPES = ['Caminar', 'Cardio', 'Pesas', 'Deporte', 'Yoga/estiramiento', 'Otro'];
 const SYMPTOMS = ['Dolor de cabeza', 'Niebla mental', 'Somnolencia', 'Ansiedad', 'Irritabilidad',
   'Antojos', 'Digestión pesada', 'Dolor muscular', 'Sin motivación', 'Tristeza'];
@@ -188,7 +209,10 @@ function caffAt(d, min) {
 }
 function dayCaff(d) {
   const others = {};
-  d.caffeine.forEach(x => parseOther(x.other).forEach(o => (others[o.n] = (others[o.n] || 0) + o.mg * (x.q || 1))));
+  d.caffeine.forEach(x => parseOther(x.other).forEach(o => {
+    const n = activeInfo(o.n).n;
+    others[n] = (others[n] || 0) + o.mg * (x.q || 1);
+  }));
   return { mg: d.caffeine.reduce((s, x) => s + entryMg(x), 0), bed: caffAt(d, bedMin()), others };
 }
 
@@ -380,8 +404,10 @@ function summaryCard(d) {
     if (cf.mg > st.caffLimit) add('bad', '☕', `Cafeína: ${Math.round(cf.mg)} mg (límite ${st.caffLimit} mg).`);
     if (cf.bed >= 50) add('bad', '🌙', `A tu hora de dormir (${st.bedtime}) aún tendrás ~${Math.round(cf.bed)} mg de cafeína en el cuerpo.`);
     else if (d.caffeine.some(x => x.t >= LATE_CAFF)) add('bad', '☕', 'Cafeína después de las 3 pm: puede afectar tu sueño de hoy.');
-    const para = Object.entries(cf.others).find(([n]) => /paracetamol|acetaminof/i.test(n));
-    if (para && para[1] > 3000) add('bad', '💊', `Llevas ${Math.round(para[1])} mg de paracetamol hoy: no pases de 3000–4000 mg al día.`);
+    for (const [n, mg] of Object.entries(cf.others)) {
+      const a = activeInfo(n);
+      if (a.kind === 'limit' && mg > a.ref) add('bad', '💊', `${esc(a.n)}: ${fmtMg(mg)} hoy, arriba del límite de ${fmtMg(a.ref)} (${esc(a.note)}).`);
+    }
   }
 
   if (d.meals.length) {
@@ -596,11 +622,32 @@ function caffCard(d) {
     <div class="nut"><div class="top"><b>Total</b><span>${Math.round(cf.mg)} mg <span class="muted">/ ${st.caffLimit} límite</span></span></div>
       <div class="bar"><i style="width:${pct}%;background:${cf.mg > st.caffLimit ? 'var(--bad)' : cf.mg > st.caffLimit * 0.8 ? 'var(--warn)' : 'var(--accent)'}"></i></div></div>
     ${caffCurve(d)}
-    ${others.length ? `<p class="muted">Otros activos hoy: ${others.map(([n, mg]) => `<b>${esc(n)} ${Math.round(mg)} mg</b>`).join(' · ')}</p>` : ''}
+    ${others.length ? `<h3>🧪 Otros activos del día</h3>${others.map(([n, mg]) => activeBar(n, mg)).join('')}
+      <p class="muted" style="margin:8px 0 0">La línea marca el límite diario o la dosis usual. Referencias generales para adultos; tu médico puede indicarte otra cosa.</p>` : ''}
     <ul class="list">${sortByTime(d.caffeine).map(x => `
       <li><span class="t">${esc(x.t)}</span><span class="grow">${esc(x.kind)} <span class="muted">${x.u ? esc(x.u) + ' · ' : ''}${Math.round(entryMg(x))} mg</span>${x.t >= LATE_CAFF ? ' <span class="tag neg">tarde</span>' : ''}</span>
       <button class="link" data-act="del" data-list="caffeine" data-id="${x.id}" aria-label="Borrar">✕</button></li>`).join('')}</ul>` : ''}
   </section>`;
+}
+
+function fmtMg(mg) { return mg >= 1000 ? `${r1(mg / 1000)} g` : `${Math.round(mg)} mg`; }
+
+// Barra de un activo con la marca del límite / dosis usual (el límite queda al 75% del ancho)
+function activeBar(name, mg, extra = '') {
+  const a = activeInfo(name);
+  if (!a.ref) {
+    return `<div class="nut"><div class="top"><b>${esc(a.n)}</b><span>${fmtMg(mg)}</span></div>
+      <div class="muted" style="font-size:12px">Sin referencia diaria${extra ? ' · ' + extra : ''}</div></div>`;
+  }
+  const scale = Math.max(a.ref / 0.75, mg);
+  const w = mg / scale * 100, mark = a.ref / scale * 100;
+  const over = mg > a.ref;
+  const color = a.kind === 'limit' ? (over ? 'var(--bad)' : mg > a.ref * 0.8 ? 'var(--warn)' : 'var(--accent)') : (over ? 'var(--warn)' : 'var(--accent)');
+  return `<div class="nut">
+    <div class="top"><b>${esc(a.n)}</b><span>${fmtMg(mg)} <span class="muted">/ ${fmtMg(a.ref)} ${a.kind === 'limit' ? 'límite' : 'usual'}</span></span></div>
+    <div class="lbar"><i style="width:${w}%;background:${color}"></i><s style="left:${mark}%"></s></div>
+    <div class="muted" style="font-size:12px">${esc(a.note)}${extra ? ' · ' + extra : ''}${over && a.kind === 'limit' ? ' · <b class="neg">por encima del límite</b>' : ''}</div>
+  </div>`;
 }
 
 // Curva de cafeína en el cuerpo a lo largo del día, hasta la hora de dormir
@@ -749,12 +796,19 @@ function caffeineAnalysis(rows) {
   const cr = rows.filter(r => S.days[r.k].caffeine.length);
   if (!cr.length) return '';
   const st = S.settings;
-  const src = {}, others = {};
+  const src = {};
   cr.forEach(r => S.days[r.k].caffeine.forEach(x => {
     const s = (src[x.kind] ||= { n: x.kind, times: 0, mg: 0 });
     s.times += x.q || 1; s.mg += entryMg(x);
-    parseOther(x.other).forEach(o => (others[o.n] = (others[o.n] || 0) + o.mg * (x.q || 1)));
   }));
+  // Por cada activo: total por día para promedio, máximo y días sobre el límite
+  const perDay = {};
+  cr.forEach(r => Object.entries(dayCaff(S.days[r.k]).others).forEach(([n, mg]) => (perDay[n] ||= []).push(mg)));
+  const others = Object.entries(perDay).map(([n, v]) => {
+    const a = activeInfo(n), maxDay = Math.max(...v);
+    const over = a.ref ? v.filter(mg => mg > a.ref).length : 0;
+    return activeBar(n, mean(v), `${v.length} días · máx. ${fmtMg(maxDay)}${a.kind === 'limit' && over ? ` · <b class="neg">${over} días sobre el límite</b>` : ''}`);
+  });
   const sources = Object.values(src).sort((a, b) => b.mg - a.mg);
   const total = sources.reduce((s, x) => s + x.mg, 0);
   const analgDays = cr.filter(r => r.analg).length;
@@ -788,7 +842,7 @@ function caffeineAnalysis(rows) {
     ${chart}
     <h3>De dónde viene tu cafeína</h3>
     <ul class="list">${sources.map(s => `<li><span class="grow">${esc(s.n)} <span class="muted">× ${fmtQ(s.times)}</span></span><span class="muted">${Math.round(s.mg)} mg · ${Math.round(s.mg / total * 100)}%</span></li>`).join('')}</ul>
-    ${Object.keys(others).length ? `<h3>Otros activos en el periodo</h3><ul class="list">${Object.entries(others).map(([k, mg]) => `<li><span class="grow">${esc(k)}</span><span class="muted">${mg >= 1000 ? r1(mg / 1000) + ' g' : Math.round(mg) + ' mg'}</span></li>`).join('')}</ul>` : ''}
+    ${others.length ? `<h3>🧪 Otros activos: promedio en los días que los tomaste</h3>${others.join('')}` : ''}
     ${analgDays >= 8 ? `<div class="flag bad mt"><span>💊</span><span>Tomaste analgésicos con cafeína ${analgDays} días en este periodo. Usarlos más de 10–15 días al mes puede causar dolor de cabeza por rebote y más cansancio. Vale la pena comentarlo con tu médico.</span></div>` : ''}
   </section>`;
 }

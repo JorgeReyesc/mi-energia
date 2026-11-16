@@ -170,3 +170,6 @@ label.f { display: flex; flex-direction: column; gap: 4px; font-size: 13px; colo
 .chip .mini { width: 20px; height: 20px; object-fit: cover; border-radius: 4px; vertical-align: -5px; margin-right: 4px; }
 .chip .muted { font-size: 12px; }
 pre.ocr { white-space: pre-wrap; font-size: 12px; background: var(--bg); padding: 8px; border-radius: 8px; max-height: 200px; overflow: auto; }
+.lbar { position: relative; height: 10px; background: var(--chip); border-radius: 999px; }
+.lbar i { display: block; height: 100%; border-radius: 999px; }
+.lbar s { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--text); border-radius: 1px; }
