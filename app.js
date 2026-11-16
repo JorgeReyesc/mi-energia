@@ -60,6 +60,40 @@ const ACTIVES = [
   { n: 'L-tirosina', re: /tirosina/, ref: 2000, kind: 'usual', note: 'dosis usual: 0.5–2 g' },
   { n: 'L-teanina', re: /teanina/, ref: 400, kind: 'usual', note: 'dosis usual: 100–400 mg' },
 ];
+// Suplementos: unidades y referencias diarias (UL = máximo tolerable para adultos)
+const SUPP_UNITS = ['g', 'mg', 'µg', 'UI', 'tableta(s)', 'cápsula(s)', 'scoop', 'gotas', 'ml'];
+const DEFAULT_SUPP_DOSE = {
+  'Multivitamínico': { dose: 1, unit: 'tableta(s)' }, 'Vitamina D': { dose: 2000, unit: 'UI' },
+  'Magnesio': { dose: 300, unit: 'mg' }, 'Omega 3': { dose: 1000, unit: 'mg' }, 'Creatina': { dose: 5, unit: 'g' },
+};
+const SUPP_REFS = [
+  { n: 'Creatina', re: /creatina/, ref: 5000, unit: 'mg', kind: 'usual', note: 'dosis usual: 3–5 g' },
+  { n: 'Vitamina D', re: /vitamina d|vit\.? d|colecalciferol/, ref: 4000, unit: 'UI', kind: 'limit', note: 'máx. tolerable (UL)' },
+  { n: 'Magnesio', re: /magnesio/, ref: 350, unit: 'mg', kind: 'limit', note: 'máx. en suplementos (UL)' },
+  { n: 'Omega 3', re: /omega/, ref: 3000, unit: 'mg', kind: 'usual', note: 'hasta 3 g sin supervisión médica' },
+  { n: 'Vitamina C', re: /vitamina c|vit\.? c|ascorbico/, ref: 2000, unit: 'mg', kind: 'limit', note: 'máx. tolerable (UL)' },
+  { n: 'Zinc', re: /zinc/, ref: 40, unit: 'mg', kind: 'limit', note: 'máx. tolerable (UL)' },
+  { n: 'Hierro', re: /hierro/, ref: 45, unit: 'mg', kind: 'limit', note: 'máx. tolerable (UL)' },
+  { n: 'Calcio', re: /calcio/, ref: 2500, unit: 'mg', kind: 'limit', note: 'máx. tolerable (UL)' },
+  { n: 'Ashwagandha', re: /ashwagandha/, ref: 600, unit: 'mg', kind: 'usual', note: 'dosis usual: 300–600 mg' },
+  { n: 'Melatonina', re: /melatonina/, ref: 5, unit: 'mg', kind: 'usual', note: 'dosis usual: 0.5–5 mg' },
+  { n: 'L-teanina', re: /teanina/, ref: 400, unit: 'mg', kind: 'usual', note: 'dosis usual: 100–400 mg' },
+  { n: 'Beta-alanina', re: /beta.?alanina/, ref: 6400, unit: 'mg', kind: 'usual', note: 'dosis usual: 3.2–6.4 g' },
+  { n: 'L-citrulina', re: /citrulina/, ref: 8000, unit: 'mg', kind: 'usual', note: 'dosis usual: 6–8 g' },
+];
+// Convierte una dosis a la unidad de la referencia; null si no se puede (cápsulas, scoops…)
+function toRefUnit(dose, unit, ref) {
+  if (ref.unit === 'UI') return unit === 'UI' ? dose : unit === 'µg' ? dose * 40 : null;
+  return { g: dose * 1000, mg: dose, 'µg': dose / 1000 }[unit] ?? null;
+}
+function suppDose(name) { return S.settings.suppDose[name] || { dose: '', unit: 'mg' }; }
+// Registro del día: antes era solo la hora (texto)
+function suppEntry(v) {
+  if (!v) return null;
+  return typeof v === 'string' ? { t: v, dose: null, unit: '' } : v;
+}
+function fmtDose(dose, unit) { return dose == null || dose === '' ? '' : `${r1(+dose)} ${unit}`; }
+
 function activeInfo(name) {
   const k = norm(name);
   return ACTIVES.find(a => a.re.test(k)) || { n: name.replace(/^./, c => c.toUpperCase()), ref: null };
@@ -100,6 +134,11 @@ for (const p of S.caffProducts) {
 }
 S.settings = { ...DEFAULT_SETTINGS, ...(S.settings || {}) };
 S.settings.nut = { ...DEFAULT_SETTINGS.nut, ...S.settings.nut };
+// Dosis de suplementos (versión nueva): agrega Creatina y dosis de inicio
+if (!S.settings.suppDose) {
+  if (!S.settings.supplements.includes('Creatina')) S.settings.supplements.push('Creatina');
+  S.settings.suppDose = Object.fromEntries(S.settings.supplements.filter(s => DEFAULT_SUPP_DOSE[s]).map(s => [s, { ...DEFAULT_SUPP_DOSE[s] }]));
+}
 
 let tab = 'hoy';
 let cur = todayKey();
@@ -630,13 +669,14 @@ function caffCard(d) {
   </section>`;
 }
 
-function fmtMg(mg) { return mg >= 1000 ? `${r1(mg / 1000)} g` : `${Math.round(mg)} mg`; }
+function fmtMg(mg) { return mg >= 1000 ? `${r1(mg / 1000)} g` : mg < 10 ? `${r1(mg)} mg` : `${Math.round(mg)} mg`; }
 
 // Barra de un activo con la marca del límite / dosis usual (el límite queda al 75% del ancho)
-function activeBar(name, mg, extra = '') {
-  const a = activeInfo(name);
+function activeBar(name, mg, extra = '', info = null) {
+  const a = info || activeInfo(name);
+  const fmt = a.unit === 'UI' ? v => `${Math.round(v)} UI` : fmtMg;
   if (!a.ref) {
-    return `<div class="nut"><div class="top"><b>${esc(a.n)}</b><span>${fmtMg(mg)}</span></div>
+    return `<div class="nut"><div class="top"><b>${esc(a.n)}</b><span>${fmt(mg)}</span></div>
       <div class="muted" style="font-size:12px">Sin referencia diaria${extra ? ' · ' + extra : ''}</div></div>`;
   }
   const scale = Math.max(a.ref / 0.75, mg);
@@ -644,7 +684,7 @@ function activeBar(name, mg, extra = '') {
   const over = mg > a.ref;
   const color = a.kind === 'limit' ? (over ? 'var(--bad)' : mg > a.ref * 0.8 ? 'var(--warn)' : 'var(--accent)') : (over ? 'var(--warn)' : 'var(--accent)');
   return `<div class="nut">
-    <div class="top"><b>${esc(a.n)}</b><span>${fmtMg(mg)} <span class="muted">/ ${fmtMg(a.ref)} ${a.kind === 'limit' ? 'límite' : 'usual'}</span></span></div>
+    <div class="top"><b>${esc(a.n)}</b><span>${fmt(mg)} <span class="muted">/ ${fmt(a.ref)} ${a.kind === 'limit' ? 'límite' : 'usual'}</span></span></div>
     <div class="lbar"><i style="width:${w}%;background:${color}"></i><s style="left:${mark}%"></s></div>
     <div class="muted" style="font-size:12px">${esc(a.note)}${extra ? ' · ' + extra : ''}${over && a.kind === 'limit' ? ' · <b class="neg">por encima del límite</b>' : ''}</div>
   </div>`;
@@ -677,15 +717,40 @@ function caffCurve(d) {
   <p class="muted" style="margin:4px 0 0">Cafeína en tu cuerpo (se elimina la mitad cada ~${CAFF_HALF_LIFE} h). A las ${esc(S.settings.bedtime)} tendrás ~<b>${Math.round(bed)} mg</b>${bed >= 50 ? ': suficiente para afectar tu sueño profundo.' : '.'}</p>`;
 }
 
+function unitSelect(attr, name, unit) {
+  return `<select ${attr}="${esc(name)}" style="width:auto" aria-label="Unidad">${SUPP_UNITS.map(u => `<option ${u === unit ? 'selected' : ''}>${u}</option>`).join('')}</select>`;
+}
+
 function suppCard(d) {
   const list = S.settings.supplements;
+  const taken = list.map(s => [s, suppEntry(d.supps[s])]).filter(([, e]) => e);
   return `
   <section class="card">
     <h2>💊 Suplementos</h2>
-    ${list.length ? `<div class="chips">${list.map(s => `<button class="chip ${d.supps[s] ? 'on' : ''}" data-act="supp" data-v="${esc(s)}">${d.supps[s] ? '✓ ' : ''}${esc(s)}${d.supps[s] ? ` <span class="muted">${esc(d.supps[s])}</span>` : ''}</button>`).join('')}</div>`
+    ${list.length ? `<div class="chips">${list.map(s => { const e = suppEntry(d.supps[s]), def = suppDose(s);
+      return `<button class="chip ${e ? 'on' : ''}" data-act="supp" data-v="${esc(s)}">${e ? '✓ ' : ''}${esc(s)} <span class="muted">${e ? `${fmtDose(e.dose, e.unit)} · ${esc(e.t)}` : fmtDose(def.dose, def.unit)}</span></button>`; }).join('')}</div>`
       : '<p class="muted">Agrega tus suplementos en Ajustes.</p>'}
-    <p class="muted" style="margin:8px 0 0">Toca para marcar como tomado (guarda la hora).</p>
+    <p class="muted" style="margin:8px 0 0">Toca para marcar como tomado con tu dosis habitual. Si hoy tomaste otra cantidad, cámbiala abajo.</p>
+    ${taken.length ? `<ul class="list">${taken.map(([s, e]) => `<li style="align-items:center">
+      <span class="t">${esc(e.t)}</span><span class="grow"><b>${esc(s)}</b></span>
+      <input type="number" min="0" step="any" data-supp-dose="${esc(s)}" value="${e.dose ?? ''}" placeholder="dosis" style="width:80px" aria-label="Dosis">
+      ${unitSelect('data-supp-unit', s, e.unit || suppDose(s).unit)}</li>`).join('')}</ul>
+    ${suppBars(taken.map(([s, e]) => [s, e.dose, e.unit]), '🧪 Dosis del día')}` : ''}
   </section>`;
+}
+
+// Barras de suplementos contra su referencia diaria (reutiliza el estilo de "otros activos")
+function suppBars(items, title, extras = []) {
+  const bars = items.filter(([, dose]) => dose != null && dose !== '').map(([s, dose, unit], i) => {
+    const ref = SUPP_REFS.find(r => r.re.test(norm(s)));
+    const amt = ref ? toRefUnit(+dose, unit, ref) : null;
+    if (!ref || amt == null) {
+      return `<div class="nut"><div class="top"><b>${esc(s)}</b><span>${fmtDose(dose, unit)}</span></div>
+        <div class="muted" style="font-size:12px">${ref ? 'Usa g, mg, µg o UI para compararlo con la referencia' : 'Sin referencia diaria'}${extras[i] ? ' · ' + extras[i] : ''}</div></div>`;
+    }
+    return activeBar(s, amt, extras[i] || '', { ...ref, n: s });
+  }).join('');
+  return bars ? `<h3>${title}</h3>${bars}<p class="muted" style="margin:8px 0 0">La línea marca el máximo tolerable (UL) o la dosis usual para adultos. Si tu médico te indicó otra dosis, sigue su indicación.</p>` : '';
 }
 
 function activityCard(d) {
@@ -807,7 +872,7 @@ function caffeineAnalysis(rows) {
   const others = Object.entries(perDay).map(([n, v]) => {
     const a = activeInfo(n), maxDay = Math.max(...v);
     const over = a.ref ? v.filter(mg => mg > a.ref).length : 0;
-    return activeBar(n, mean(v), `${v.length} días · máx. ${fmtMg(maxDay)}${a.kind === 'limit' && over ? ` · <b class="neg">${over} días sobre el límite</b>` : ''}`);
+    return activeBar(n, mean(v), `${v.length} día${v.length === 1 ? "" : "s"} · máx. ${fmtMg(maxDay)}${a.kind === 'limit' && over ? ` · <b class="neg">${over} días sobre el límite</b>` : ''}`);
   });
   const sources = Object.values(src).sort((a, b) => b.mg - a.mg);
   const total = sources.reduce((s, x) => s + x.mg, 0);
@@ -1005,8 +1070,16 @@ function symptomsCard(rows) {
 function suppAdherenceCard(rows) {
   const list = S.settings.supplements;
   if (!list.length) return '';
-  return `<section class="card"><h2>💊 Constancia con suplementos</h2>
+  // Dosis promedio en los días que lo tomaste (convertida a la unidad habitual de cada suplemento)
+  const avgDose = list.map(s => {
+    const unit = suppDose(s).unit;
+    const doses = rows.map(r => suppEntry(S.days[r.k].supps[s])).filter(e => e && e.dose != null && e.dose !== '' && (e.unit || unit) === unit).map(e => +e.dose);
+    return doses.length ? [s, mean(doses), unit, `${doses.length} día${doses.length === 1 ? "" : "s"} · máx. ${fmtDose(Math.max(...doses), unit)}`] : null;
+  }).filter(Boolean);
+  return `<section class="card"><h2>💊 Suplementos</h2>
+    <h3>Constancia</h3>
     ${list.map(s => { const n = rows.filter(r => S.days[r.k].supps[s]).length; return `<div class="factor"><div class="top"><b>${esc(s)}</b><span>${n} de ${rows.length} días</span></div><div class="bar"><i style="width:${n / rows.length * 100}%"></i></div></div>`; }).join('')}
+    ${suppBars(avgDose.map(([s, d, u]) => [s, d, u]), '🧪 Dosis promedio en los días que lo tomaste', avgDose.map(x => x[3]))}
   </section>`;
 }
 
@@ -1053,8 +1126,17 @@ function viewAjustes() {
   ${caffProductsCard()}
   <section class="card">
     <h2>💊 Mis suplementos</h2>
-    <ul class="list">${st.supplements.map(s => `<li><span class="grow">${esc(s)}</span><button class="link danger" data-act="supp-del" data-v="${esc(s)}">Quitar</button></li>`).join('')}</ul>
-    <div class="row mt"><input class="grow" id="new-supp" placeholder="ej. Hierro, B12, Creatina, Ashwagandha"><button class="primary" data-act="supp-new">Agregar</button></div>
+    <p class="muted" style="margin-top:0">Tu dosis habitual se usa cada vez que marcas el suplemento como tomado.</p>
+    <ul class="list">${st.supplements.map(s => { const d = suppDose(s); return `<li style="align-items:center"><span class="grow">${esc(s)}</span>
+      <input type="number" min="0" step="any" data-sdose="${esc(s)}" value="${d.dose}" placeholder="dosis" style="width:80px" aria-label="Dosis habitual">
+      ${unitSelect('data-sunit', s, d.unit)}
+      <button class="link danger" data-act="supp-del" data-v="${esc(s)}">Quitar</button></li>`; }).join('')}</ul>
+    <div class="row mt">
+      <input class="grow" id="new-supp" placeholder="ej. Hierro, B12, Ashwagandha">
+      <input type="number" min="0" step="any" id="new-supp-dose" placeholder="dosis" style="width:80px" aria-label="Dosis">
+      <select id="new-supp-unit" style="width:auto" aria-label="Unidad">${SUPP_UNITS.map(u => `<option>${u}</option>`).join('')}</select>
+      <button class="primary" data-act="supp-new">Agregar</button>
+    </div>
   </section>
   <section class="card">
     <h2>🍽️ Metas de nutrición (por día)</h2>
@@ -1223,7 +1305,7 @@ function toCSV() {
     const d = S.days[k], m = metrics(k);
     return [k, r1(m.energy), r1(m.mood), d.checkins.length, r1(m.sleepH), m.sleepQ, m.wakeups, r1(m.waterL), m.caffeine, Math.round(m.caffMg), Math.round(m.caffBed), m.lateCaff ? 1 : 0,
       m.exMin, m.sun, m.stress, m.alcohol, d.screens ? 1 : 0, m.meals, m.breakfast == null ? '' : m.breakfast ? 1 : 0,
-      ...MEAL_TAGS.map(t => m.tags[t[0]] ?? ''), ...supps.map(s => d.supps[s] ? 1 : 0), ...NUTR.map((_, i) => m.nut ? r1(m.nut[i]) : ''), d.symptoms.join(' | '),
+      ...MEAL_TAGS.map(t => m.tags[t[0]] ?? ''), ...supps.map(s => { const e = suppEntry(d.supps[s]); return e ? (e.dose != null ? `${e.dose} ${e.unit}` : 1) : 0; }), ...NUTR.map((_, i) => m.nut ? r1(m.nut[i]) : ''), d.symptoms.join(' | '),
       sortByTime(d.meals).map(x => `${x.t} ${x.type}: ${x.desc}`).join(' | '),
       sortByTime(d.caffeine).map(x => `${x.t} ${x.kind} ${Math.round(entryMg(x))} mg`).join(' | '), d.notes].map(v => q(v === '—' ? '' : v)).join(',');
   });
@@ -1349,7 +1431,8 @@ document.addEventListener('click', e => {
       return;
 
     case 'supp':
-      if (d.supps[v]) delete d.supps[v]; else d.supps[v] = nowHM();
+      if (d.supps[v]) delete d.supps[v];
+      else { const def = suppDose(v); d.supps[v] = { t: nowHM(), dose: def.dose === '' ? null : def.dose, unit: def.unit }; }
       return commit();
 
     case 'ex-kind': draft.ex.kind = v; render(); return;
@@ -1394,6 +1477,8 @@ document.addEventListener('click', e => {
       if (!name) return;
       if (S.settings.supplements.includes(name)) return toast('Ya existe');
       S.settings.supplements.push(name);
+      const dose = document.getElementById('new-supp-dose').value;
+      S.settings.suppDose[name] = { dose: dose === '' ? '' : +dose, unit: document.getElementById('new-supp-unit').value };
       return commit('Suplemento agregado ✓');
     }
     case 'supp-del':
@@ -1430,6 +1515,19 @@ document.addEventListener('change', e => {
   } else if (el.dataset.setting) {
     const n = +el.value;
     if (n > 0) { S.settings[el.dataset.setting] = n; commit('Guardado ✓'); }
+  } else if (el.dataset.suppDose != null || el.dataset.suppUnit != null) {
+    // Dosis o unidad de un suplemento tomado hoy
+    const s = el.dataset.suppDose ?? el.dataset.suppUnit, d = D();
+    const e = suppEntry(d.supps[s]);
+    if (!e) return;
+    if (el.dataset.suppDose != null) e.dose = el.value === '' ? null : +el.value; else e.unit = el.value;
+    d.supps[s] = e; commit();
+  } else if (el.dataset.sdose != null || el.dataset.sunit != null) {
+    // Dosis habitual en Ajustes
+    const s = el.dataset.sdose ?? el.dataset.sunit;
+    const cur = (S.settings.suppDose[s] ||= { dose: '', unit: 'mg' });
+    if (el.dataset.sdose != null) cur.dose = el.value === '' ? '' : +el.value; else cur.unit = el.value;
+    commit('Guardado ✓');
   } else if (el.dataset.settingStr) {
     if (el.value) { S.settings[el.dataset.settingStr] = el.value; commit('Guardado ✓'); }
   } else if (el.dataset.photo && el.files[0]) {
