@@ -5,7 +5,7 @@ const STORE = 'energia.v1';
 const DEFAULT_SETTINGS = {
   waterGoal: 2000, glassMl: 250, sleepGoal: 7.5,
   supplements: ['Multivitamínico', 'Vitamina D', 'Magnesio', 'Omega 3'],
-  caffLimit: 400, bedtime: '23:00',
+  caffLimit: 400, bedtime: '23:00', weightKg: 75, liftUnit: 'kg', customLifts: [],
   nut: { kcal: 2200, prot: 90, carb: 250, sugar: 50, fat: 70, sat: 20, fib: 30, na: 2300 },
 };
 // Nutrientes en el mismo orden que los valores de foods.js.
@@ -99,7 +99,40 @@ function activeInfo(name) {
   return ACTIVES.find(a => a.re.test(k)) || { n: name.replace(/^./, c => c.toUpperCase()), ref: null };
 }
 const TESSERACT_URL ='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
-const EX_TYPES = ['Caminar', 'Cardio', 'Pesas', 'Deporte', 'Yoga/estiramiento', 'Otro'];
+// MET aproximado por actividad (gasto ≈ MET × peso kg × horas). Los juegos son 2 tiempos de 20 min.
+const EX_TYPES = [
+  { n: 'Caminar', met: 3.5 }, { n: 'Cardio', met: 7 }, { n: 'Pesas', met: 5 },
+  { n: 'Flag QB', met: 5, min: 40 }, { n: 'Flag Receptor', met: 8.5, min: 40 }, { n: 'Futsal', met: 8, min: 40 },
+  { n: 'Deporte', met: 7 }, { n: 'Yoga/estiramiento', met: 2.5 }, { n: 'Otro', met: 4 },
+];
+const INTENSITY = ['Suave', 'Moderada', 'Intensa'];
+const INT_FACTOR = [0.8, 1, 1.2];
+const LIFTS = {
+  Pecho: ['Press de banca', 'Press inclinado con barra', 'Press con mancuernas', 'Press inclinado con mancuernas',
+    'Aperturas con mancuernas', 'Cruce de poleas', 'Fondos', 'Lagartijas'],
+  Espalda: ['Dominadas', 'Jalón al pecho', 'Remo con barra', 'Remo con mancuerna', 'Remo sentado en polea', 'Peso muerto', 'Pullover en polea'],
+  Piernas: ['Sentadilla', 'Sentadilla frontal', 'Prensa', 'Zancadas', 'Sentadilla búlgara', 'Extensión de cuádriceps',
+    'Curl femoral', 'Peso muerto rumano', 'Hip thrust', 'Elevación de talones'],
+  Hombro: ['Press militar', 'Press con mancuernas sentado', 'Elevaciones laterales', 'Elevaciones frontales',
+    'Pájaros (deltoide posterior)', 'Face pull', 'Encogimientos'],
+  Brazos: ['Curl con barra', 'Curl con mancuernas', 'Curl martillo', 'Curl en polea', 'Extensión de tríceps en polea', 'Press francés', 'Fondos en banco'],
+  Core: ['Plancha (segundos)', 'Crunch', 'Elevación de piernas', 'Rueda abdominal', 'Russian twist'],
+};
+function exKcal(x) {
+  const t = EX_TYPES.find(e => e.n === x.kind) || { met: 4 };
+  return t.met * (INT_FACTOR[(x.int || 2) - 1] || 1) * S.settings.weightKg * (+x.min || 0) / 60;
+}
+// Agrupa series por ejercicio conservando el orden: [[ejercicio, [series]]]
+function groupSets(sets) {
+  const g = new Map();
+  (sets || []).forEach(s => { if (!g.has(s.ex)) g.set(s.ex, []); g.get(s.ex).push(s); });
+  return [...g];
+}
+function setsLine(sets) {
+  const u = S.settings.liftUnit;
+  return sets.map(s => s.kg ? `${s.reps}×${r1(s.kg)} ${u}` : `${s.reps}`).join(' · ');
+}
+function volume(sets) { return (sets || []).reduce((a, s) => a + (+s.reps || 0) * (+s.kg || 0), 0); }
 const SYMPTOMS = ['Dolor de cabeza', 'Niebla mental', 'Somnolencia', 'Ansiedad', 'Irritabilidad',
   'Antojos', 'Digestión pesada', 'Dolor muscular', 'Sin motivación', 'Tristeza'];
 const MOOD = ['😞', '😕', '😐', '🙂', '😄'];
@@ -150,7 +183,7 @@ const draft = {
   food: { n: '', u: '1 porción', v: ['', '', '', '', '', '', '', ''], photo: '', status: '', ocr: '' },
   cp: { id: '', n: '', u: '1 unidad', mg: '', other: '', photo: '', status: '', ocr: '' },
   caff: { t: '' },
-  ex: { kind: 'Caminar', min: '', int: 2, t: '' },
+  ex: { kind: 'Caminar', min: '', int: 2, t: '', sets: [], lift: { ex: 'Press de banca', reps: '', kg: '' } },
 };
 
 function save() {
@@ -284,6 +317,7 @@ function metrics(k) {
     analg: d.caffeine.some(x => ANALG_RE.test(x.other || '')),
     lateCaff: dayFlags(d).lateCaff,
     exMin: d.exercise.reduce((a, x) => a + (+x.min || 0), 0),
+    exKcal: d.exercise.reduce((a, x) => a + exKcal(x), 0),
     sun: d.sun,
     stress: d.stress || null,
     alcohol: d.alcohol,
@@ -293,7 +327,7 @@ function metrics(k) {
     supps: Object.fromEntries(S.settings.supplements.map(s => [s, !!d.supps[s]])),
     symptoms: d.symptoms.length,
     nut: dayNut(d),
-    prev: pf ? { caffBed: dayCaff(p).bed, lateCaff: pf.lateCaff, lateDinner: pf.lateDinner, alcohol: p.alcohol, screens: !!p.screens } : null,
+    prev: pf ? { exKcal: p.exercise.reduce((a, x) => a + exKcal(x), 0), caffBed: dayCaff(p).bed, lateCaff: pf.lateCaff, lateDinner: pf.lateDinner, alcohol: p.alcohol, screens: !!p.screens } : null,
   };
 }
 
@@ -324,6 +358,11 @@ function factors() {
       more: 'Moverte te da energía: agenda 20–30 min diarios, aunque sea caminar.' },
     { label: 'Sol / aire libre', unit: ' min', get: m => m.sun,
       more: 'Sal 10–20 min a la luz natural en la mañana; ayuda al ritmo circadiano y al ánimo.' },
+    { label: 'Gasto en ejercicio', unit: ' kcal', get: m => m.exKcal,
+      more: 'Los días que te mueves más tienes más energía: mantén al menos una actividad diaria.',
+      less: 'Los días de mucho gasto te dejan con menos energía: cuida comer suficiente proteína y carbohidrato después de jugar o entrenar.' },
+    { label: 'Gasto en ejercicio (día anterior)', unit: ' kcal', get: m => m.prev ? m.prev.exKcal : null,
+      less: 'Después de un día de mucho gasto amaneces cansado: prioriza sueño, hidratación y comida de recuperación esa noche.' },
     { label: 'Estrés', unit: '/5', get: m => m.stress,
       less: 'El estrés te drena: prueba pausas de respiración, caminatas cortas y poner límites al trabajo.' },
     { label: 'Alcohol (mismo día)', unit: '', get: m => m.alcohol,
@@ -418,6 +457,7 @@ function viewHoy() {
   ${caffCard(d)}
   ${suppCard(d)}
   ${activityCard(d)}
+  ${sunCard(d)}
   ${otherCard(d)}`;
 }
 
@@ -753,29 +793,67 @@ function suppBars(items, title, extras = []) {
   return bars ? `<h3>${title}</h3>${bars}<p class="muted" style="margin:8px 0 0">La línea marca el máximo tolerable (UL) o la dosis usual para adultos. Si tu médico te indicó otra dosis, sigue su indicación.</p>` : '';
 }
 
-function activityCard(d) {
+function liftOptions(sel) {
+  const groups = { ...LIFTS };
+  if (S.settings.customLifts.length) groups['Mis ejercicios'] = S.settings.customLifts;
+  return Object.entries(groups).map(([g, list]) => `<optgroup label="${esc(g)}">${list.map(n => `<option ${n === sel ? 'selected' : ''}>${esc(n)}</option>`).join('')}</optgroup>`).join('');
+}
+
+function exBtnText() {
   const e = draft.ex;
+  const kcal = +e.min > 0 ? Math.round(exKcal({ kind: e.kind, min: e.min, int: +e.int })) : null;
+  return `Agregar ${esc(e.kind)}${kcal ? ` · ~${kcal} kcal` : ''}`;
+}
+
+function activityCard(d) {
+  const e = draft.ex, u = S.settings.liftUnit;
+  const totMin = d.exercise.reduce((a, x) => a + (+x.min || 0), 0);
+  const totKcal = d.exercise.reduce((a, x) => a + exKcal(x), 0);
   return `
   <section class="card">
-    <h2>🏃 Movimiento y sol</h2>
-    <div class="chips">${EX_TYPES.map(t => `<button class="chip ${e.kind === t ? 'on' : ''}" data-act="ex-kind" data-v="${t}">${t}</button>`).join('')}</div>
+    <h2>🏃 Movimiento<span class="sub">${totMin ? `${totMin} min · ~${Math.round(totKcal)} kcal` : ''}</span></h2>
+    <div class="chips">${EX_TYPES.map(t => `<button class="chip ${e.kind === t.n ? 'on' : ''}" data-act="ex-kind" data-v="${t.n}">${t.n}</button>`).join('')}</div>
     <div class="row mt">
       <input type="time" data-draft="ex.t" value="${esc(e.t || nowHM())}" aria-label="Hora">
       <input type="number" min="1" max="600" data-draft="ex.min" value="${esc(e.min)}" placeholder="min" style="width:80px" aria-label="Minutos">
       <select data-draft="ex.int" style="width:auto" aria-label="Intensidad">
-        ${['Suave', 'Moderada', 'Intensa'].map((l, i) => `<option value="${i + 1}" ${+e.int === i + 1 ? 'selected' : ''}>${l}</option>`).join('')}
+        ${INTENSITY.map((l, i) => `<option value="${i + 1}" ${+e.int === i + 1 ? 'selected' : ''}>${l}</option>`).join('')}
       </select>
-      <button class="primary" data-act="ex-add">Agregar</button>
     </div>
+    ${EX_TYPES.find(t => t.n === e.kind)?.min ? '<p class="muted" style="margin:6px 0 0">Partido de 2 tiempos de 20 min (ajusta si jugaste menos).</p>' : ''}
+    ${e.kind === 'Pesas' ? `
+    <h3>🏋️ Series</h3>
+    <select data-draft="ex.lift.ex" aria-label="Ejercicio">${liftOptions(e.lift.ex)}</select>
+    <div class="row mt">
+      <input type="number" min="1" data-draft="ex.lift.reps" value="${esc(e.lift.reps)}" placeholder="reps" style="width:80px" aria-label="Repeticiones">
+      <span class="muted">×</span>
+      <input type="number" min="0" step="any" data-draft="ex.lift.kg" value="${esc(e.lift.kg)}" placeholder="${u}" style="width:90px" aria-label="Peso">
+      <span class="muted">${u}</span>
+      <button data-act="set-add">+ Serie</button>
+    </div>
+    ${e.sets.length ? `<ul class="list">${groupSets(e.sets).map(([ex, sets]) => `
+      <li><span class="grow"><b>${esc(ex)}</b><br><span class="muted">${sets.length} series: ${setsLine(sets)}</span></span>
+      <button class="link" data-act="set-del" data-v="${esc(ex)}" aria-label="Quitar última serie">↶</button></li>`).join('')}</ul>
+      <p class="muted" style="margin:6px 0 0">Volumen: <b>${Math.round(volume(e.sets))} ${u}</b> (reps × peso). ↶ quita la última serie de ese ejercicio.</p>` : ''}` : ''}
+    <button class="primary mt" data-act="ex-add" id="ex-add-btn" style="width:100%">${exBtnText()}</button>
     ${d.exercise.length ? `<ul class="list">${sortByTime(d.exercise).map(x => `
-      <li><span class="t">${esc(x.t)}</span><span class="grow">${esc(x.kind)} · ${esc(x.min)} min · ${['Suave', 'Moderada', 'Intensa'][x.int - 1] || ''}</span>
+      <li><span class="t">${esc(x.t)}</span><span class="grow"><b>${esc(x.kind)}</b> · ${esc(x.min)} min · ${INTENSITY[x.int - 1] || ''} · ~${Math.round(exKcal(x))} kcal
+      ${x.sets?.length ? groupSets(x.sets).map(([ex, sets]) => `<br><span class="muted">${esc(ex)}: ${setsLine(sets)}</span>`).join('') + `<br><span class="muted">Volumen: ${Math.round(volume(x.sets))} ${u}</span>` : ''}</span>
       <button class="link" data-act="del" data-list="exercise" data-id="${x.id}" aria-label="Borrar">✕</button></li>`).join('')}</ul>` : ''}
-    <h3>Sol / aire libre</h3>
+    <p class="muted" style="margin:8px 0 0">Calorías estimadas con tu peso (${S.settings.weightKg} kg, cámbialo en Ajustes).</p>
+  </section>`;
+}
+
+function sunCard(d) {
+  return `
+  <section class="card">
+    <h2>☀️ Sol / aire libre<span class="sub">${d.sun ? d.sun + ' min' : ''}</span></h2>
     <div class="stepper">
       <button class="icon" data-act="inc" data-path="sun" data-v="-10" aria-label="Menos">−</button>
       <div class="val">${d.sun} min</div>
       <button data-act="inc" data-path="sun" data-v="10">+10 min</button>
     </div>
+    <p class="muted" style="margin:8px 0 0">Luz natural directa, idealmente en la mañana: ayuda al ritmo de sueño, al ánimo y a la vitamina D. Cuenta también el tiempo de juego al aire libre.</p>
   </section>`;
 }
 
@@ -853,6 +931,45 @@ function nutritionAnalysis(rows) {
     ${nutritionCard(avg, 'Promedio por día', 'Promedio de los días en que registraste alimentos. Valores aproximados.')}
     ${top.length ? `<h3>🏆 Lo que más calorías te aporta</h3><ul class="list">${top.map(f => `<li><span class="grow">${esc(f.n)} <span class="muted">× ${fmtQ(f.times)}</span></span><span class="muted">${Math.round(f.kcal)} kcal</span></li>`).join('')}</ul>` : ''}
     ${topSugar.length ? `<h3>🍬 De dónde viene tu azúcar</h3><ul class="list">${topSugar.map(f => `<li><span class="grow">${esc(f.n)} <span class="muted">× ${fmtQ(f.times)}</span></span><span class="muted">${Math.round(f.sugar)} g</span></li>`).join('')}</ul>` : ''}
+  </section>`;
+}
+
+// ----- Análisis: ejercicio acumulado -----
+function exerciseAnalysis(rows) {
+  const er = rows.filter(r => S.days[r.k].exercise.length);
+  if (!er.length) return '';
+  const u = S.settings.liftUnit;
+  const byType = {};
+  const lifts = {};
+  er.forEach(r => S.days[r.k].exercise.forEach(x => {
+    const t = (byType[x.kind] ||= { n: x.kind, times: 0, min: 0, kcal: 0 });
+    t.times++; t.min += +x.min || 0; t.kcal += exKcal(x);
+    groupSets(x.sets).forEach(([ex, sets]) => {
+      const best = Math.max(...sets.map(s => +s.kg || 0));
+      (lifts[ex] ||= []).push({ k: r.k, best, reps: Math.max(...sets.map(s => +s.reps || 0)), vol: volume(sets) });
+    });
+  }));
+  const types = Object.values(byType).sort((a, b) => b.kcal - a.kcal);
+  const maxK = Math.max(...types.map(t => t.kcal));
+  const weeks = Math.max(1, (new Date(er[er.length - 1].k) - new Date(rows[0].k)) / 864e5 / 7 + 1 / 7);
+  const totalMin = types.reduce((a, t) => a + t.min, 0), totalKcal = types.reduce((a, t) => a + t.kcal, 0);
+  return `
+  <section class="card">
+    <h2>🏃 Ejercicio<span class="sub">${er.length} días activos</span></h2>
+    <div class="stats">
+      <div class="stat"><b>${Math.round(totalMin / weeks)} min</b><span>Por semana (meta 150+)</span></div>
+      <div class="stat"><b>~${Math.round(totalKcal / weeks)} kcal</b><span>Gasto por semana</span></div>
+    </div>
+    <h3>Por actividad</h3>
+    ${types.map(t => `<div class="nut"><div class="top"><b>${esc(t.n)}</b><span>${t.times}× · ${t.min} min · ~${Math.round(t.kcal)} kcal</span></div>
+      <div class="bar"><i style="width:${t.kcal / maxK * 100}%"></i></div></div>`).join('')}
+    ${Object.keys(lifts).length ? `<h3>🏋️ Progreso en pesas</h3><ul class="list">${Object.entries(lifts).map(([ex, s]) => {
+      const first = s[0], last = s[s.length - 1], top = Math.max(...s.map(x => x.best));
+      const delta = last.best - first.best;
+      return `<li><span class="grow"><b>${esc(ex)}</b> <span class="muted">· ${s.length} ${s.length === 1 ? 'sesión' : 'sesiones'}</span><br>
+        <span class="muted">Mejor: ${r1(top)} ${u} · Última: ${r1(last.best)} ${u} × ${last.reps} reps</span></span>
+        ${s.length > 1 ? `<b class="${delta >= 0 ? 'pos' : 'neg'}">${delta >= 0 ? '+' : ''}${r1(delta)} ${u}</b>` : ''}</li>`;
+    }).join('')}</ul><p class="muted" style="margin:6px 0 0">El cambio compara el peso más alto de tu primera y tu última sesión del periodo.</p>` : ''}
   </section>`;
 }
 
@@ -984,7 +1101,7 @@ function viewAnalisis() {
     <p class="muted mt">Cambia una sola cosa a la vez durante 1–2 semanas, así sabrás qué funcionó.</p>
   </section>` : '';
 
-  return head + stats + nutritionAnalysis(rows) + caffeineAnalysis(rows) + factorsCard + recCard + timeOfDayCard(rows) + experimentsCard() + symptomsCard(rows) + suppAdherenceCard(rows) + healthCard();
+  return head + stats + nutritionAnalysis(rows) + exerciseAnalysis(rows) + caffeineAnalysis(rows) + factorsCard + recCard + timeOfDayCard(rows) + experimentsCard() + symptomsCard(rows) + suppAdherenceCard(rows) + healthCard();
 }
 
 function trendChart(rows) {
@@ -1122,6 +1239,18 @@ function viewAjustes() {
       <label class="f">Cafeína máx. (mg)<input type="number" min="50" step="25" data-setting="caffLimit" value="${st.caffLimit}" style="width:110px"></label>
       <label class="f">Hora habitual de dormir<input type="time" data-setting-str="bedtime" value="${esc(st.bedtime)}"></label>
     </div>
+  </section>
+  <section class="card">
+    <h2>🏋️ Ejercicio</h2>
+    <div class="row">
+      <label class="f">Tu peso (kg)<input type="number" min="30" max="250" step="0.5" data-setting="weightKg" value="${st.weightKg}" style="width:100px"></label>
+      <label class="f">Unidad de pesas<select data-setting-str="liftUnit" style="width:auto">${['kg', 'lb'].map(x => `<option ${x === st.liftUnit ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+    </div>
+    <p class="muted">Tu peso se usa para estimar las calorías de cada actividad.</p>
+    <h3>Mis ejercicios de gimnasio</h3>
+    <p class="muted" style="margin-top:0">Se agregan a la lista de ejercicios al registrar Pesas, en el grupo "Mis ejercicios".</p>
+    ${st.customLifts.length ? `<ul class="list">${st.customLifts.map(n => `<li><span class="grow">${esc(n)}</span><button class="link danger" data-act="lift-del" data-v="${esc(n)}">Quitar</button></li>`).join('')}</ul>` : ''}
+    <div class="row mt"><input class="grow" id="new-lift" placeholder="ej. Press Arnold, Remo T, Hack squat"><button class="primary" data-act="lift-new">Agregar</button></div>
   </section>
   ${caffProductsCard()}
   <section class="card">
@@ -1298,16 +1427,17 @@ function download(name, text, type) {
 function toCSV() {
   const supps = S.settings.supplements;
   const head = ['fecha', 'energia', 'animo', 'checkins', 'sueno_h', 'calidad_sueno', 'despertares', 'agua_l', 'cafeina_tomas', 'cafeina_mg', 'cafeina_al_dormir_mg', 'cafeina_tarde',
-    'ejercicio_min', 'sol_min', 'estres', 'alcohol', 'pantallas_noche', 'comidas', 'desayuno', ...MEAL_TAGS.map(t => 'comida_' + t[0]),
-    ...supps.map(s => 'sup_' + s), ...NUTR.map(([k, , u]) => `${k}_${u}`), 'sintomas', 'detalle_comidas', 'detalle_cafeina', 'notas'];
+    'ejercicio_min', 'ejercicio_kcal', 'sol_min', 'estres', 'alcohol', 'pantallas_noche', 'comidas', 'desayuno', ...MEAL_TAGS.map(t => 'comida_' + t[0]),
+    ...supps.map(s => 'sup_' + s), ...NUTR.map(([k, , u]) => `${k}_${u}`), 'sintomas', 'detalle_comidas', 'detalle_cafeina', 'detalle_ejercicio', 'notas'];
   const q = v => { const s = v == null ? '' : String(v); return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const lines = Object.keys(S.days).sort().filter(k => hasData(S.days[k])).map(k => {
     const d = S.days[k], m = metrics(k);
     return [k, r1(m.energy), r1(m.mood), d.checkins.length, r1(m.sleepH), m.sleepQ, m.wakeups, r1(m.waterL), m.caffeine, Math.round(m.caffMg), Math.round(m.caffBed), m.lateCaff ? 1 : 0,
-      m.exMin, m.sun, m.stress, m.alcohol, d.screens ? 1 : 0, m.meals, m.breakfast == null ? '' : m.breakfast ? 1 : 0,
+      m.exMin, Math.round(m.exKcal), m.sun, m.stress, m.alcohol, d.screens ? 1 : 0, m.meals, m.breakfast == null ? '' : m.breakfast ? 1 : 0,
       ...MEAL_TAGS.map(t => m.tags[t[0]] ?? ''), ...supps.map(s => { const e = suppEntry(d.supps[s]); return e ? (e.dose != null ? `${e.dose} ${e.unit}` : 1) : 0; }), ...NUTR.map((_, i) => m.nut ? r1(m.nut[i]) : ''), d.symptoms.join(' | '),
       sortByTime(d.meals).map(x => `${x.t} ${x.type}: ${x.desc}`).join(' | '),
-      sortByTime(d.caffeine).map(x => `${x.t} ${x.kind} ${Math.round(entryMg(x))} mg`).join(' | '), d.notes].map(v => q(v === '—' ? '' : v)).join(',');
+      sortByTime(d.caffeine).map(x => `${x.t} ${x.kind} ${Math.round(entryMg(x))} mg`).join(' | '),
+      sortByTime(d.exercise).map(x => `${x.t} ${x.kind} ${x.min} min${x.sets?.length ? ' (' + groupSets(x.sets).map(([e, s]) => `${e}: ${setsLine(s)}`).join('; ') + ')' : ''}`).join(' | '), d.notes].map(v => q(v === '—' ? '' : v)).join(',');
   });
   return [head.map(q).join(','), ...lines].join('\n');
 }
@@ -1435,12 +1565,32 @@ document.addEventListener('click', e => {
       else { const def = suppDose(v); d.supps[v] = { t: nowHM(), dose: def.dose === '' ? null : def.dose, unit: def.unit }; }
       return commit();
 
-    case 'ex-kind': draft.ex.kind = v; render(); return;
-    case 'ex-add':
-      if (!(+draft.ex.min > 0)) return toast('Indica los minutos');
-      d.exercise.push({ id: uid(), t: draft.ex.t || nowHM(), kind: draft.ex.kind, min: +draft.ex.min, int: +draft.ex.int || 2 });
-      draft.ex = { kind: draft.ex.kind, min: '', int: 2, t: '' };
+    case 'ex-kind': {
+      const prev = EX_TYPES.find(t => t.n === draft.ex.kind), next = EX_TYPES.find(t => t.n === v);
+      // Los partidos traen sus 40 min; al cambiar de un partido a otra cosa se limpia
+      if (next.min && (!draft.ex.min || prev?.min)) draft.ex.min = String(next.min);
+      else if (!next.min && prev?.min && +draft.ex.min === prev.min) draft.ex.min = '';
+      draft.ex.kind = v; render(); return;
+    }
+    case 'set-add': {
+      const l = draft.ex.lift;
+      if (!(+l.reps > 0)) return toast('Indica las repeticiones');
+      draft.ex.sets.push({ ex: l.ex, reps: +l.reps, kg: l.kg === '' ? 0 : +l.kg });
+      render(); return; // reps y peso se quedan para registrar la siguiente serie rápido
+    }
+    case 'set-del': {
+      const i = draft.ex.sets.map(s => s.ex).lastIndexOf(v);
+      if (i >= 0) draft.ex.sets.splice(i, 1);
+      render(); return;
+    }
+    case 'ex-add': {
+      const e = draft.ex;
+      if (!(+e.min > 0)) return toast('Indica los minutos');
+      if (e.kind === 'Pesas' && (e.lift.reps || e.lift.kg) && !e.sets.length) return toast('Toca "+ Serie" para guardar la serie antes de agregar');
+      d.exercise.push({ id: uid(), t: e.t || nowHM(), kind: e.kind, min: +e.min, int: +e.int || 2, ...(e.sets.length ? { sets: e.sets.slice() } : {}) });
+      draft.ex = { kind: e.kind, min: EX_TYPES.find(t => t.n === e.kind)?.min ? e.min : '', int: 2, t: '', sets: [], lift: { ex: e.lift.ex, reps: '', kg: '' } };
       return commit('Actividad agregada ✓');
+    }
 
     case 'inc': setPath(d, el.dataset.path, Math.max(0, (getPath(d, el.dataset.path) || 0) + +v)); return commit();
     case 'stress': d.stress = d.stress === +v ? 0 : +v; return commit();
@@ -1472,6 +1622,16 @@ document.addEventListener('click', e => {
       if (confirm('¿Borrar este experimento?')) { S.experiments = S.experiments.filter(x => x.id !== el.dataset.id); commit(); }
       return;
 
+    case 'lift-new': {
+      const name = document.getElementById('new-lift').value.trim();
+      if (!name) return;
+      if (S.settings.customLifts.includes(name) || Object.values(LIFTS).flat().includes(name)) return toast('Ese ejercicio ya está en la lista');
+      S.settings.customLifts.push(name);
+      return commit('Ejercicio agregado ✓');
+    }
+    case 'lift-del':
+      if (confirm(`¿Quitar ${v} de tus ejercicios? (lo ya registrado se conserva)`)) { S.settings.customLifts = S.settings.customLifts.filter(n => n !== v); commit(); }
+      return;
     case 'supp-new': {
       const name = document.getElementById('new-supp').value.trim();
       if (!name) return;
@@ -1503,7 +1663,11 @@ document.addEventListener('input', e => {
     // Solo se actualizan los resultados para no perder el foco del teclado
     draft.meal.q = el.value;
     document.getElementById('food-results').innerHTML = foodResults();
-  } else if (el.dataset.draft) setPath(draft, el.dataset.draft, el.value);
+  } else if (el.dataset.draft) {
+    setPath(draft, el.dataset.draft, el.value);
+    // Actualiza la estimación de calorías sin redibujar (no se pierde el foco)
+    if (/^ex\.(min|int)$/.test(el.dataset.draft)) document.getElementById('ex-add-btn').innerHTML = exBtnText();
+  }
   else if (el.dataset.bind && el.tagName === 'TEXTAREA') { setPath(D(), el.dataset.bind, el.value); save(); }
 });
 
