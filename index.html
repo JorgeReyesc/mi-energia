@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="description" content="Registro diario de sueño, comida, agua, suplementos y ánimo para entender tu energía.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Mi Energía">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <title>Mi Energía</title>
+</head>
+<body>
+  <header id="top">
+    <h1>Mi Energía</h1>
+  </header>
+  <main id="view"></main>
+  <nav id="nav">
+    <button data-act="tab" data-v="hoy"><span>📝</span>Hoy</button>
+    <button data-act="tab" data-v="analisis"><span>📊</span>Análisis</button>
+    <button data-act="tab" data-v="historial"><span>📅</span>Historial</button>
+    <button data-act="tab" data-v="ajustes"><span>⚙️</span>Ajustes</button>
+  </nav>
+  <div id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>
