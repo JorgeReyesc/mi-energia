@@ -32,8 +32,8 @@ const DEFAULT_CAFF = [
   { id: 'cafe-soluble', n: 'Café soluble', u: '1 cucharadita', mg: 60, other: '' },
   { id: 'te-negro', n: 'Té negro', u: '1 taza', mg: 47, other: '' },
   { id: 'te-verde', n: 'Té verde', u: '1 taza', mg: 28, other: '' },
-  { id: 'cola-lata', n: 'Refresco de cola', u: '1 lata (355 ml)', mg: 34, other: '' },
-  { id: 'cola-600', n: 'Refresco de cola', u: '600 ml', mg: 57, other: '' },
+  { id: 'cola-lata', n: 'Coca-Cola', u: '1 lata (355 ml)', mg: 34, other: '' },
+  { id: 'cola-600', n: 'Coca-Cola', u: '600 ml', mg: 57, other: '' },
   { id: 'energetica', n: 'Bebida energética', u: '1 lata (250 ml)', mg: 80, other: '' },
   { id: 'energetica-grande', n: 'Bebida energética grande', u: '1 lata (473 ml)', mg: 160, other: '' },
   { id: 'chocolate', n: 'Chocolate oscuro', u: '30 g', mg: 20, other: '' },
@@ -64,6 +64,8 @@ S.caffProducts ||= DEFAULT_CAFF.map(p => ({ ...p }));
 // Pasa Sedalmerck y Alka-Seltzer Boost de 1 a 2 tabletas si siguen con el valor de inicio anterior
 for (const p of S.caffProducts) {
   const def = DEFAULT_CAFF.find(d => d.id === p.id);
+  // Refresco de cola → Coca-Cola
+  if (def && p.n === 'Refresco de cola') p.n = def.n;
   if (def && def.u === '2 tabletas' && p.u === '1 tableta' && p.mg * 2 === def.mg) Object.assign(p, { u: def.u, mg: def.mg, other: def.other });
 }
 S.settings = { ...DEFAULT_SETTINGS, ...(S.settings || {}) };

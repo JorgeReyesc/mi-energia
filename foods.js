@@ -146,9 +146,9 @@ const FOODS_RAW = [
   ['Barra de granola', '1 pieza', 120, 2.5, 19, 8, 4, 1.5, 1.5, 80, 'ap', 'barrita'],
   ['Churros', '2 piezas', 230, 3, 26, 8, 13, 3, 1, 180, 'haf', 'churro'],
   // Bebidas
-  ['Refresco', '1 lata (355 ml)', 150, 0, 39, 39, 0, 0, 0, 45, 'ap', 'coca cola soda'],
-  ['Refresco', '1 botella (600 ml)', 250, 0, 65, 65, 0, 0, 0, 75, 'ap', 'coca cola soda'],
-  ['Refresco light / cero', '1 lata (355 ml)', 0, 0, 0, 0, 0, 0, 0, 40, 'p', 'coca zero diet'],
+  ['Coca-Cola', '1 lata (355 ml)', 150, 0, 39, 39, 0, 0, 0, 45, 'ap', 'refresco coca soda'],
+  ['Coca-Cola', '1 botella (600 ml)', 250, 0, 65, 65, 0, 0, 0, 75, 'ap', 'refresco coca soda'],
+  ['Coca-Cola Sin Azúcar / Light', '1 lata (355 ml)', 0, 0, 0, 0, 0, 0, 0, 40, 'p', 'refresco coca zero diet'],
   ['Jugo de naranja natural', '1 vaso (240 ml)', 110, 1.7, 26, 21, 0.5, 0, 0.5, 2, '', 'jugo'],
   ['Jugo industrializado', '1 vaso (240 ml)', 130, 0, 32, 30, 0, 0, 0, 20, 'ap', 'jugo del valle boing jumex'],
   ['Agua de sabor', '1 vaso (300 ml)', 100, 0, 25, 24, 0, 0, 0, 10, 'a', 'jamaica horchata tamarindo limonada'],
