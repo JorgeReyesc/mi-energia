@@ -453,17 +453,25 @@ function viewHoy() {
     <div class="d">${isToday ? 'Hoy · ' : ''}${esc(fmtDate(cur))}</div>
     <button class="icon" data-act="day" data-v="1" aria-label="Día siguiente" ${isToday ? 'disabled' : ''}>▶</button>
   </div>
-  ${isToday ? '' : '<button class="link" data-act="today">← Volver a hoy</button>'}
-  ${summaryCard(d)}
-  ${checkinCard(d)}
-  ${sleepCard(d)}
-  ${waterCard(d)}
-  ${mealsCard(d)}
-  ${caffCard(d)}
-  ${suppCard(d)}
-  ${activityCard(d)}
-  ${sunCard(d)}
-  ${otherCard(d)}`;
+  <div class="row" style="justify-content:space-between;margin:-4px 0 8px">
+    ${isToday ? '<span></span>' : '<button class="link" data-act="today">← Volver a hoy</button>'}
+    <span><button class="link" data-act="sec-all" data-v="1">Abrir todo</button><button class="link" data-act="sec-all" data-v="0">Cerrar todo</button></span>
+  </div>
+  ${[['resumen', summaryCard], ['animo', checkinCard], ['sueno', sleepCard], ['agua', waterCard], ['comidas', mealsCard],
+    ['cafeina', caffCard], ['suplementos', suppCard], ['movimiento', activityCard], ['sol', sunCard], ['otros', otherCard]]
+    .map(([id, fn]) => collapsible(id, fn(d))).join('')}`;
+}
+
+// Convierte una tarjeta en desplegable: el título (con su resumen) abre y cierra; el estado se recuerda
+const HOY_SECTIONS = ['resumen', 'animo', 'sueno', 'agua', 'comidas', 'cafeina', 'suplementos', 'movimiento', 'sol', 'otros'];
+function collapsible(id, html) {
+  const ui = (S.ui ||= { open: ['resumen', 'animo'] });
+  const open = ui.open.includes(id);
+  return html
+    .replace('<section class="card"', `<section class="card sec${open ? ' open' : ''}" data-sec="${id}"`)
+    .replace('<h2>', `<h2 data-act="sec" data-v="${id}" role="button" tabindex="0" aria-expanded="${open}">`)
+    // Un resumen vacío empuja la flecha a la derecha en tarjetas sin resumen
+    .replace(/<\/h2>/, m => (html.slice(0, html.indexOf('</h2>')).includes('class="sub"') ? '' : '<span class="sub"></span>') + m);
 }
 
 function summaryCard(d) {
@@ -575,7 +583,7 @@ function checkinCard(d) {
   const c = draft.ci;
   return `
   <section class="card">
-    <h2>🙂 ¿Cómo te sientes ahora?<span class="sub">registra 3–4 veces al día</span></h2>
+    <h2>🙂 ¿Cómo te sientes ahora?<span class="sub">${d.checkins.length ? `${d.checkins.length} registro${d.checkins.length === 1 ? '' : 's'} · ⚡ ${r1(mean(d.checkins.map(x => x.energy)))}` : 'registra 3–4 veces al día'}</span></h2>
     <h3>Ánimo</h3>${scale('ci-mood', c.mood, MOOD, MOOD_L)}
     <h3>Energía</h3>${scale('ci-energy', c.energy, ENERGY, ENERGY_L)}
     <div class="row mt">
@@ -608,7 +616,7 @@ function waterCard(d) {
   const st = S.settings, pct = Math.min(100, d.water / st.waterGoal * 100);
   return `
   <section class="card">
-    <h2>💧 Agua<span class="sub">meta ${r1(st.waterGoal / 1000)} L</span></h2>
+    <h2>💧 Agua<span class="sub">${r1(d.water / 1000)} de ${r1(st.waterGoal / 1000)} L</span></h2>
     <div class="stepper">
       <button class="icon" data-act="water" data-v="-${st.glassMl}" aria-label="Quitar vaso">−</button>
       <div class="val">${r1(d.water / 1000)} L</div>
@@ -623,7 +631,7 @@ function mealsCard(d) {
   const m = draft.meal;
   return `
   <section class="card">
-    <h2>🍽️ Comidas</h2>
+    <h2>🍽️ Comidas<span class="sub">${d.meals.length ? `${d.meals.length} · ${dayNut(d) ? Math.round(dayNut(d)[0]) + ' kcal' : ''}` : ''}</span></h2>
     <div class="chips">${MEAL_TYPES.map(t => `<button class="chip ${m.type === t ? 'on' : ''}" data-act="meal-type" data-v="${t}">${t}</button>`).join('')}</div>
     <div class="row mt">
       <input type="time" data-draft="meal.t" value="${esc(m.t || nowHM())}" aria-label="Hora">
@@ -771,7 +779,7 @@ function suppCard(d) {
   const taken = list.map(s => [s, suppEntry(d.supps[s])]).filter(([, e]) => e);
   return `
   <section class="card">
-    <h2>💊 Suplementos</h2>
+    <h2>💊 Suplementos<span class="sub">${taken.length} de ${list.length}</span></h2>
     ${list.length ? `<div class="chips">${list.map(s => { const e = suppEntry(d.supps[s]), def = suppDose(s);
       return `<button class="chip ${e ? 'on' : ''}" data-act="supp" data-v="${esc(s)}">${e ? '✓ ' : ''}${esc(s)} <span class="muted">${e ? `${fmtDose(e.dose, e.unit)} · ${esc(e.t)}` : fmtDose(def.dose, def.unit)}</span></button>`; }).join('')}</div>`
       : '<p class="muted">Agrega tus suplementos en Ajustes.</p>'}
@@ -865,7 +873,7 @@ function sunCard(d) {
 function otherCard(d) {
   return `
   <section class="card">
-    <h2>🧩 Otros factores</h2>
+    <h2>🧩 Otros factores<span class="sub">${[d.stress ? `estrés ${d.stress}/5` : '', d.alcohol ? `${d.alcohol} alcohol` : '', d.symptoms.length ? `${d.symptoms.length} síntoma${d.symptoms.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span></h2>
     <h3>Nivel de estrés hoy</h3>
     ${scale('stress', d.stress, ['😌', '🙂', '😐', '😣', '🤯'], ['Nada', 'Poco', 'Medio', 'Alto', 'Muy alto'])}
     <h3>Alcohol (bebidas)</h3>
@@ -1458,6 +1466,15 @@ document.addEventListener('click', e => {
   const d = tab === 'hoy' ? D() : null;
   switch (a) {
     case 'tab': tab = v; render(); window.scrollTo(0, 0); return;
+    case 'sec': {
+      const ui = (S.ui ||= { open: ['resumen', 'animo'] });
+      const i = ui.open.indexOf(v);
+      i >= 0 ? ui.open.splice(i, 1) : ui.open.push(v);
+      el.closest('.sec').classList.toggle('open', i < 0);
+      el.setAttribute('aria-expanded', i < 0);
+      save(); return;
+    }
+    case 'sec-all': (S.ui ||= { open: [] }).open = v === '1' ? HOY_SECTIONS.slice() : []; save(); render(); return;
     case 'day': cur = shift(cur, +v); if (cur > todayKey()) cur = todayKey(); render(); return;
     case 'today': cur = todayKey(); render(); return;
     case 'open': cur = v; tab = 'hoy'; render(); window.scrollTo(0, 0); return;
@@ -1660,6 +1677,11 @@ document.addEventListener('click', e => {
       }
       return;
   }
+});
+
+// Enter o espacio sobre un título desplegable lo abre/cierra
+document.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('h2[data-act="sec"]')) { e.preventDefault(); e.target.click(); }
 });
 
 document.addEventListener('input', e => {

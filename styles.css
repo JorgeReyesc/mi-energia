@@ -173,3 +173,11 @@ pre.ocr { white-space: pre-wrap; font-size: 12px; background: var(--bg); padding
 .lbar { position: relative; height: 10px; background: var(--chip); border-radius: 999px; }
 .lbar i { display: block; height: 100%; border-radius: 999px; }
 .lbar s { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--text); border-radius: 1px; }
+
+/* Secciones desplegables en Hoy */
+.sec > h2 { cursor: pointer; margin: 0; user-select: none; }
+.sec > h2::after { content: "›"; display: inline-block; margin-left: 8px; font-size: 20px; line-height: 1; color: var(--muted); transform: rotate(90deg); transition: transform .15s; }
+.sec:not(.open) > h2::after { transform: rotate(0deg); }
+.sec.open > h2 { margin-bottom: 10px; }
+.sec:not(.open) > :not(h2) { display: none; }
+.sec > h2 .sub { margin-left: auto; }
