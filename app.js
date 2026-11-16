@@ -26,6 +26,7 @@ const MEAL_TAGS = [
 const DEFAULT_CAFF = [
   { id: 'sedalmerck', n: 'Sedalmerck', u: '2 tabletas', mg: 100, other: 'Paracetamol 1000 mg, Fenilefrina 10 mg' },
   { id: 'alka-boost', n: 'Alka-Seltzer Boost', u: '2 tabletas', mg: 130, other: 'Ácido acetilsalicílico 1000 mg' },
+  { id: 'edge-insanity', n: 'Edge of Insanity (pre-entreno)', u: '1 scoop', mg: 420, other: 'Beta-alanina 3200 mg, L-citrulina 6000 mg' },
   { id: 'sedalmerck-max', n: 'Sedalmerck Max', u: '1 tableta', mg: 65, other: 'Paracetamol 650 mg' },
   { id: 'cafe', n: 'Café americano', u: '1 taza (240 ml)', mg: 95, other: '' },
   { id: 'espresso', n: 'Espresso', u: '1 shot', mg: 63, other: '' },
@@ -61,6 +62,14 @@ S.days ||= {};
 S.experiments ||= [];
 S.customFoods ||= [];
 S.caffProducts ||= DEFAULT_CAFF.map(p => ({ ...p }));
+// Productos de inicio que se agregaron en versiones nuevas: se añaden una sola vez (si luego los quitas, no regresan)
+const ADDED_LATER = ['edge-insanity'];
+S.caffDefaultsSeen ||= [...S.caffProducts.map(p => p.id), ...DEFAULT_CAFF.map(d => d.id).filter(id => !ADDED_LATER.includes(id))];
+DEFAULT_CAFF.forEach((def, i) => {
+  if (S.caffDefaultsSeen.includes(def.id)) return;
+  S.caffProducts.splice(Math.min(i, S.caffProducts.length), 0, { ...def });
+  S.caffDefaultsSeen.push(def.id);
+});
 // Pasa Sedalmerck y Alka-Seltzer Boost de 1 a 2 tabletas si siguen con el valor de inicio anterior
 for (const p of S.caffProducts) {
   const def = DEFAULT_CAFF.find(d => d.id === p.id);
