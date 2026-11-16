@@ -5,7 +5,7 @@ const STORE = 'energia.v1';
 const DEFAULT_SETTINGS = {
   waterGoal: 2000, glassMl: 250, sleepGoal: 7.5,
   supplements: ['Multivitamínico', 'Vitamina D', 'Magnesio', 'Omega 3'],
-  caffLimit: 400, bedtime: '23:00', weightKg: 75, liftUnit: 'kg', customLifts: [],
+  caffLimit: 400, bedtime: '23:00', weightKg: 75, liftUnit: 'lb', customLifts: [],
   nut: { kcal: 2200, prot: 90, carb: 250, sugar: 50, fat: 70, sat: 20, fib: 30, na: 2300 },
 };
 // Nutrientes en el mismo orden que los valores de foods.js.
@@ -130,7 +130,7 @@ function groupSets(sets) {
 }
 function setsLine(sets) {
   const u = S.settings.liftUnit;
-  return sets.map(s => s.kg ? `${s.reps}×${r1(s.kg)} ${u}` : `${s.reps}`).join(' · ');
+  return sets.map(s => s.kg ? `${s.reps}×${r1(s.kg)} ${s.u || u}` : `${s.reps}`).join(' · ');
 }
 function volume(sets) { return (sets || []).reduce((a, s) => a + (+s.reps || 0) * (+s.kg || 0), 0); }
 const SYMPTOMS = ['Dolor de cabeza', 'Niebla mental', 'Somnolencia', 'Ansiedad', 'Irritabilidad',
@@ -168,6 +168,11 @@ for (const p of S.caffProducts) {
 S.settings = { ...DEFAULT_SETTINGS, ...(S.settings || {}) };
 S.settings.nut = { ...DEFAULT_SETTINGS.nut, ...S.settings.nut };
 // Dosis de suplementos (versión nueva): agrega Creatina y dosis de inicio
+// Pesas en libras por defecto (solo si aún no hay series registradas en kg)
+if (!S.settings.liftUnitV2) {
+  if (!Object.values(S.days).some(d => d.exercise?.some(x => x.sets?.length))) S.settings.liftUnit = 'lb';
+  S.settings.liftUnitV2 = true;
+}
 if (!S.settings.suppDose) {
   if (!S.settings.supplements.includes('Creatina')) S.settings.supplements.push('Creatina');
   S.settings.suppDose = Object.fromEntries(S.settings.supplements.filter(s => DEFAULT_SUPP_DOSE[s]).map(s => [s, { ...DEFAULT_SUPP_DOSE[s] }]));
@@ -1575,7 +1580,7 @@ document.addEventListener('click', e => {
     case 'set-add': {
       const l = draft.ex.lift;
       if (!(+l.reps > 0)) return toast('Indica las repeticiones');
-      draft.ex.sets.push({ ex: l.ex, reps: +l.reps, kg: l.kg === '' ? 0 : +l.kg });
+      draft.ex.sets.push({ ex: l.ex, reps: +l.reps, kg: l.kg === '' ? 0 : +l.kg, u: S.settings.liftUnit });
       render(); return; // reps y peso se quedan para registrar la siguiente serie rápido
     }
     case 'set-del': {
