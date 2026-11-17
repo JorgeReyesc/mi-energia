@@ -2,7 +2,7 @@
 
 // ---------- Constantes ----------
 const STORE = 'energia.v1';
-const APP_VERSION = '14'; // igual que CACHE en sw.js
+const APP_VERSION = '15'; // igual que CACHE en sw.js
 const DEFAULT_SETTINGS = {
   waterGoal: 2000, glassMl: 250, sleepGoal: 7.5,
   supplements: ['Multivitamínico', 'Vitamina D', 'Magnesio', 'Omega 3'],
@@ -150,6 +150,7 @@ if (!S || typeof S !== 'object') S = {};
 S.days ||= {};
 S.experiments ||= [];
 S.customFoods ||= [];
+S.recipes ||= [];
 S.caffProducts ||= DEFAULT_CAFF.map(p => ({ ...p }));
 // Productos de inicio que se agregaron en versiones nuevas: se añaden una sola vez (si luego los quitas, no regresan)
 const ADDED_LATER = ['edge-insanity'];
@@ -185,7 +186,7 @@ let range = 30;
 let outcome = 'energy';
 const draft = {
   ci: { mood: 0, energy: 0, note: '', t: '' },
-  meal: { type: '', tags: [], desc: '', t: '', q: '', items: [] },
+  meal: { type: '', tags: [], desc: '', t: '', q: '', items: [], recipe: '', saving: false, rn: '', rp: '1', editing: '' },
   food: { n: '', u: '1 porción', v: ['', '', '', '', '', '', '', ''], photo: '', status: '', ocr: '' },
   cp: { id: '', n: '', u: '1 unidad', mg: '', other: '', photo: '', status: '', ocr: '' },
   caff: { t: '' },
@@ -247,16 +248,44 @@ function sleepHours(s) {
 }
 // ---------- Nutrición ----------
 function norm(s) { return String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
-function allFoods() { return [...S.customFoods.map(f => ({ ...f, custom: true })), ...FOODS]; }
+function recipeAsFood(r) {
+  const per = sumNut(r.items).map(x => x / r.portions);
+  return { n: r.n, u: r.portions > 1 ? `1 de ${r.portions} porciones` : '1 porción', v: per, recipe: r, al: r.items.map(it => it.n).join(' ') };
+}
+function allFoods() {
+  return [...S.recipes.map(recipeAsFood), ...S.customFoods.map(f => ({ ...f, custom: true })), ...FOODS];
+}
+const blankMeal = () => ({ type: '', tags: [], desc: '', t: '', q: '', items: [], recipe: '', saving: false, rn: '', rp: '1', editing: '' });
+// Agrega un alimento (o los ingredientes de una receta, ya en 1 porción) a la comida que se está armando
+function addToMeal(f) {
+  const m = draft.meal;
+  const add = (x, q) => {
+    const same = m.items.find(it => it.n === x.n && it.u === x.u);
+    if (same) same.q = Math.round((same.q + q) * 100) / 100;
+    else m.items.push({ n: x.n, u: x.u, q: Math.round(q * 100) / 100, v: x.v.slice(), fl: x.fl || '' });
+    for (const c of x.fl || '') if (FLAG_TAGS[c] && !m.tags.includes(FLAG_TAGS[c])) m.tags.push(FLAG_TAGS[c]);
+  };
+  if (f.recipe) {
+    f.recipe.items.forEach(it => add(it, it.q / f.recipe.portions));
+    if (!m.recipe) m.recipe = f.recipe.n;
+  } else add(f, 1);
+  const n = sumNut(m.items);
+  if (n[1] >= 15 && !m.tags.includes('proteina')) m.tags.push('proteina');
+  if (n[0] >= 900 && !m.tags.includes('abundante')) m.tags.push('abundante');
+}
 function searchFoods(q) {
   const words = norm(q).split(/\s+/).filter(w => w.length > 1 && !['de', 'con', 'la', 'el', 'una', 'un'].includes(w));
   if (!words.length) return [];
   return allFoods().map(f => {
     const name = norm(f.n), all = name + ' ' + norm(f.al || '');
     // Más puntos si la palabra está en el nombre o al inicio
-    const score = words.reduce((s, w) => s + (name.startsWith(w) ? 3 : name.includes(w) ? 2 : all.includes(w) ? 1 : 0), 0);
+    let score = words.reduce((s, w) => s + (name.startsWith(w) ? 3 : name.includes(w) ? 2 : all.includes(w) ? 1 : 0), 0);
+    // El nombre exacto gana ("crema" antes que "crema de cacahuate")
+    if (score && name.split(/[\s/(),]+/).filter(Boolean).join(' ') === words.join(' ')) score += 5;
     return { f, score };
-  }).filter(x => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 8).map(x => x.f);
+  }).filter(x => x.score > 0)
+    // Empate: primero el nombre más corto (más genérico)
+    .sort((a, b) => b.score - a.score || a.f.n.length - b.f.n.length).slice(0, 8).map(x => x.f);
 }
 function sumNut(items) {
   const t = [0, 0, 0, 0, 0, 0, 0, 0];
@@ -636,19 +665,28 @@ function mealsCard(d) {
   <section class="card">
     <h2>🍽️ Comidas<span class="sub">${d.meals.length ? `${d.meals.length} · ${dayNut(d) ? Math.round(dayNut(d)[0]) + ' kcal' : ''}` : ''}</span></h2>
     <div class="chips">${MEAL_TYPES.map(t => `<button class="chip ${m.type === t ? 'on' : ''}" data-act="meal-type" data-v="${t}">${t}</button>`).join('')}</div>
+    ${S.recipes.length ? `<h3>📒 Mis recetas</h3><div class="chips">${S.recipes.map(r => `<button class="chip" data-act="recipe-use" data-id="${r.id}">${esc(r.n)} <span class="muted">${Math.round(recipeAsFood(r).v[0])} kcal</span></button>`).join('')}</div>` : ''}
     <div class="row mt">
       <input type="time" data-draft="meal.t" value="${esc(m.t || nowHM())}" aria-label="Hora">
-      <input class="grow" id="meal-search" type="search" value="${esc(m.q)}" placeholder="Busca: pizza, tacos, refresco…" autocomplete="off">
+      <input class="grow" id="meal-search" type="search" value="${esc(m.q)}" placeholder="Busca un platillo o ingrediente: pan, jamón, aguacate…" autocomplete="off">
     </div>
     <div id="food-results">${foodResults()}</div>
     ${m.items.length ? `<ul class="list">${m.items.map((it, i) => `
-      <li><span class="grow"><b>${esc(it.n)}</b><br><span class="muted">${fmtQ(it.q)} × ${esc(it.u)} · ${Math.round(it.v[0] * it.q)} kcal · P ${r1(it.v[1] * it.q)} g · Azúcar ${r1(it.v[3] * it.q)} g</span></span>
+      <li style="align-items:center"><span class="grow"><b>${esc(it.n)}</b><br><span class="muted">${esc(it.u)} · ${Math.round(it.v[0] * it.q)} kcal · P ${r1(it.v[1] * it.q)} g · Azúcar ${r1(it.v[3] * it.q)} g</span></span>
       <span class="row" style="gap:4px;flex-wrap:nowrap">
         <button class="icon" data-act="item-q" data-i="${i}" data-v="-0.5" aria-label="Menos">−</button>
+        <input type="number" min="0.05" step="any" data-item-q="${i}" value="${fmtQ(it.q)}" style="width:62px;text-align:center;padding:8px 4px" aria-label="Cantidad">
         <button class="icon" data-act="item-q" data-i="${i}" data-v="0.5" aria-label="Más">+</button>
         <button class="link" data-act="item-del" data-i="${i}" aria-label="Quitar">✕</button>
       </span></li>`).join('')}</ul>
-      <p class="muted" style="margin:6px 0 0">Esta comida: <b>${nutLine(sumNut(m.items))}</b></p>` : ''}
+      <p class="muted" style="margin:6px 0 0">${m.recipe ? `Receta: <b>${esc(m.recipe)}</b> · ` : ''}Esta comida: <b>${nutLine(sumNut(m.items))}</b></p>
+      ${m.saving ? `
+      <div class="recipe-form mt">
+        <label class="f">Nombre de la receta<input data-draft="meal.rn" value="${esc(m.rn)}" placeholder="ej. Sándwich de pavo, Pasta con atún"></label>
+        <label class="f mt">¿Cuántas porciones rinde lo que capturaste?<input type="number" min="1" step="1" data-draft="meal.rp" value="${esc(m.rp)}" style="width:90px"></label>
+        <p class="muted" style="margin:6px 0 0">Si capturaste una olla o un refractario completo, pon cuántas porciones salen; esta comida contará solo 1.</p>
+        <div class="row mt"><button class="primary" data-act="recipe-save">${m.editing ? 'Guardar cambios' : 'Guardar receta'}</button><button data-act="recipe-cancel">Cancelar</button></div>
+      </div>` : `<button class="link mt" style="padding-left:0" data-act="recipe-start">💾 Guardar estos ingredientes como receta</button>`}` : ''}
     <input class="mt" data-draft="meal.desc" value="${esc(m.desc)}" placeholder="Nota o descripción (opcional)">
     <h3>Etiquetas (se agregan solas según los alimentos; ajusta si quieres)</h3>
     <div class="chips">${MEAL_TAGS.map(([t, l]) => `<button class="chip ${m.tags.includes(t) ? 'on' : ''}" data-act="meal-tag" data-v="${t}">${l}</button>`).join('')}</div>
@@ -668,7 +706,7 @@ function foodResults() {
   if (!q) return '';
   lastResults = searchFoods(q);
   return `<div class="results">${lastResults.map((f, i) => `
-    <button class="result" data-act="food-add" data-i="${i}"><span><b>${esc(f.n)}</b>${f.custom ? ' <span class="tag">mío</span>' : ''}<br><span class="muted">${esc(f.u)}</span></span><span class="muted">${Math.round(f.v[0])} kcal</span></button>`).join('')}
+    <button class="result" data-act="food-add" data-i="${i}"><span><b>${esc(f.n)}</b>${f.recipe ? ' <span class="tag">receta</span>' : f.custom ? ' <span class="tag">mío</span>' : ''}<br><span class="muted">${esc(f.u)}</span></span><span class="muted">${Math.round(f.v[0])} kcal</span></button>`).join('')}
     <button class="link" data-act="food-new">＋ No está: crear "${esc(q)}" con sus valores</button></div>`;
 }
 
@@ -1288,6 +1326,14 @@ function viewAjustes() {
     <div class="row">${NUTR.map(([key, label, unit]) => `<label class="f">${label} (${unit})<input type="number" min="0" data-nut="${key}" value="${st.nut[key]}" style="width:110px"></label>`).join('')}</div>
     <p class="muted">Referencias generales para un adulto. Si tienes un plan de un nutriólogo, usa sus cifras.</p>
   </section>
+  <section class="card" id="recipes">
+    <h2>📒 Mis recetas</h2>
+    <p class="muted" style="margin-top:0">Para crear una: en Hoy → Comidas agrega los ingredientes con el buscador y toca "Guardar estos ingredientes como receta".</p>
+    ${S.recipes.length ? `<ul class="list">${S.recipes.map(r => `<li><span class="grow"><b>${esc(r.n)}</b> <span class="muted">· ${r.portions > 1 ? `rinde ${r.portions} porciones` : '1 porción'}</span><br>
+      <span class="muted">Por porción: ${nutLine(recipeAsFood(r).v)}</span><br>
+      <span class="muted">${r.items.map(it => `${fmtQ(it.q)} × ${esc(it.n)} (${esc(it.u)})`).join(' · ')}</span></span>
+      <span class="row" style="flex-direction:column;gap:2px"><button class="link" data-act="recipe-use" data-id="${r.id}">Usar hoy</button><button class="link" data-act="recipe-edit" data-id="${r.id}">Editar</button><button class="link danger" data-act="recipe-del" data-id="${r.id}">Quitar</button></span></li>`).join('')}</ul>` : '<p class="muted">Aún no tienes recetas.</p>'}
+  </section>
   <section class="card" id="custom-foods">
     <h2>🥫 Mis alimentos</h2>
     <p class="muted" style="margin-top:0">Agrega lo que comes seguido y no aparece en el buscador. Los valores vienen en la etiqueta nutrimental.</p>
@@ -1507,22 +1553,56 @@ document.addEventListener('click', e => {
     case 'food-add': {
       const f = lastResults[+el.dataset.i];
       if (!f) return;
-      const m = draft.meal;
-      const same = m.items.find(it => it.n === f.n && it.u === f.u);
-      if (same) same.q += 1; else m.items.push({ n: f.n, u: f.u, q: 1, v: f.v.slice(), fl: f.fl || '' });
-      // Etiquetas automáticas según el alimento
-      for (const c of f.fl || '') if (FLAG_TAGS[c] && !m.tags.includes(FLAG_TAGS[c])) m.tags.push(FLAG_TAGS[c]);
-      const n = sumNut(m.items);
-      if (n[1] >= 15 && !m.tags.includes('proteina')) m.tags.push('proteina');
-      if (n[0] >= 900 && !m.tags.includes('abundante')) m.tags.push('abundante');
-      m.q = '';
+      addToMeal(f);
+      draft.meal.q = '';
       render();
       document.getElementById('meal-search')?.focus();
       return;
     }
+    case 'recipe-use': {
+      const r = S.recipes.find(r => r.id === el.dataset.id);
+      if (!r) return;
+      if (tab !== 'hoy') { tab = 'hoy'; (S.ui ||= { open: [] }).open.includes('comidas') || S.ui.open.push('comidas'); }
+      addToMeal(recipeAsFood(r));
+      render();
+      document.querySelector('[data-sec="comidas"]')?.scrollIntoView();
+      return toast(`${r.n} agregada; ajusta lo que cambió hoy`);
+    }
+    case 'recipe-start': {
+      const m = draft.meal;
+      m.saving = true; m.rn ||= m.recipe || ''; render(); return;
+    }
+    case 'recipe-cancel': Object.assign(draft.meal, { saving: false, editing: '' }); render(); return;
+    case 'recipe-save': {
+      const m = draft.meal, name = m.rn.trim(), portions = Math.max(1, Math.round(+m.rp || 1));
+      if (!name) return toast('Ponle nombre a la receta');
+      if (!m.items.length) return toast('Agrega ingredientes primero');
+      const items = m.items.map(({ n, u, q, v, fl }) => ({ n, u, q, v, fl: fl || '' }));
+      const same = S.recipes.find(r => r.id === m.editing) || S.recipes.find(r => norm(r.n) === norm(name));
+      if (same && same.id !== m.editing && !confirm(`Ya tienes una receta "${same.n}". ¿Reemplazarla?`)) return;
+      if (same) Object.assign(same, { n: name, portions, items });
+      else S.recipes.push({ id: uid(), n: name, portions, items });
+      const wasEditing = !!m.editing;
+      // Si rinde varias porciones, esta comida cuenta solo una
+      if (portions > 1) m.items.forEach(it => (it.q = Math.round(it.q / portions * 100) / 100));
+      Object.assign(m, { saving: false, editing: '', recipe: name, rn: '', rp: '1' });
+      if (wasEditing) draft.meal = blankMeal();
+      return commit(portions > 1 ? `Receta guardada ✓ Esta comida cuenta 1 de ${portions} porciones` : 'Receta guardada ✓');
+    }
+    case 'recipe-edit': {
+      const r = S.recipes.find(r => r.id === el.dataset.id);
+      if (!r) return;
+      draft.meal = { ...blankMeal(), items: r.items.map(it => ({ ...it, v: it.v.slice() })), recipe: r.n, saving: true, rn: r.n, rp: String(r.portions), editing: r.id };
+      tab = 'hoy'; (S.ui ||= { open: [] }).open.includes('comidas') || S.ui.open.push('comidas');
+      render(); document.querySelector('[data-sec="comidas"]')?.scrollIntoView();
+      return toast('Edita los ingredientes y toca "Guardar cambios"');
+    }
+    case 'recipe-del':
+      if (confirm('¿Quitar esta receta? (las comidas ya registradas no cambian)')) { S.recipes = S.recipes.filter(r => r.id !== el.dataset.id); commit(); }
+      return;
     case 'item-q': {
       const it = draft.meal.items[+el.dataset.i];
-      it.q = Math.max(0.5, it.q + +v); render(); return;
+      it.q = Math.max(0.25, Math.round((it.q + +v) * 100) / 100); render(); return;
     }
     case 'item-del': draft.meal.items.splice(+el.dataset.i, 1); render(); return;
     case 'food-new':
@@ -1544,10 +1624,10 @@ document.addEventListener('click', e => {
     case 'meal-add': {
       const m = draft.meal;
       if (!m.desc.trim() && !m.type && !m.items.length) return toast('Busca un alimento o escribe qué comiste');
-      const desc = m.desc.trim() || m.items.map(it => `${fmtQ(it.q)} ${it.n}`).join(', ');
+      const desc = m.desc.trim() || m.recipe || m.items.map(it => `${fmtQ(it.q)} ${it.n}`).join(', ');
       d.meals.push({ id: uid(), t: m.t || nowHM(), type: m.type, desc, tags: m.tags.slice(),
         items: m.items.map(({ n, u, q, v }) => ({ n, u, q, v })) });
-      draft.meal = { type: '', tags: [], desc: '', t: '', q: '', items: [] };
+      draft.meal = blankMeal();
       return commit('Comida agregada ✓');
     }
 
@@ -1691,7 +1771,7 @@ document.addEventListener('click', e => {
     }
     case 'wipe':
       if (confirm('¿Borrar TODOS tus registros? No se puede deshacer.') && confirm('¿Seguro? Te recomiendo descargar un respaldo antes.')) {
-        S = { days: {}, experiments: [], customFoods: S.customFoods, caffProducts: S.caffProducts, settings: { ...S.settings },
+        S = { days: {}, experiments: [], customFoods: S.customFoods, recipes: S.recipes, caffProducts: S.caffProducts, settings: { ...S.settings },
           ui: S.ui, _u: S._u, _wiped: Date.now() };
         commit('Datos borrados');
       }
@@ -1739,6 +1819,10 @@ document.addEventListener('change', e => {
     const cur = (S.settings.suppDose[s] ||= { dose: '', unit: 'mg' });
     if (el.dataset.sdose != null) cur.dose = el.value === '' ? '' : +el.value; else cur.unit = el.value;
     commit('Guardado ✓');
+  } else if (el.dataset.itemQ != null) {
+    const it = draft.meal.items[+el.dataset.itemQ];
+    if (it && +el.value > 0) it.q = Math.round(+el.value * 100) / 100;
+    render();
   } else if (el.dataset.settingStr) {
     if (el.value) { S.settings[el.dataset.settingStr] = el.value; commit('Guardado ✓'); }
   } else if (el.dataset.photo && el.files[0]) {
@@ -1753,7 +1837,7 @@ document.addEventListener('change', e => {
         const data = JSON.parse(r.result);
         if (!data.days) throw new Error();
         if (!confirm('Esto reemplazará tus datos actuales con el respaldo. ¿Continuar?')) return;
-        S = { days: data.days, experiments: data.experiments || [], customFoods: data.customFoods || [],
+        S = { days: data.days, experiments: data.experiments || [], customFoods: data.customFoods || [], recipes: data.recipes || [],
           caffProducts: data.caffProducts || DEFAULT_CAFF.map(p => ({ ...p })),
           settings: { ...DEFAULT_SETTINGS, ...data.settings, nut: { ...DEFAULT_SETTINGS.nut, ...data.settings?.nut } } };
         commit('Respaldo restaurado ✓');

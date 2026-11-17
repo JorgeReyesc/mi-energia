@@ -26,6 +26,8 @@ PWA personal para registrar el día (ánimo/energía, sueño, agua, comidas con 
 ## Datos y migraciones
 
 - Todo vive en `localStorage` (clave `energia.v1`). Cada día está en `S.days['AAAA-MM-DD']`.
+- Recetas del usuario en `S.recipes` (`{ id, n, portions, items }`); al usarlas se agregan sus ingredientes ya divididos entre las porciones. Cada comida guarda copia de los valores (`items[].v`), así que cambiar `foods.js` o una receta no altera el historial.
+- Si agregas una sección nueva a `S` que deba sincronizarse, súmala a `META_PARTS` en `sync.js` y consérvala en "Borrar todos los datos" y "Restaurar respaldo".
 - La app ya está en uso con datos reales: al cambiar la forma de los datos, agrega una migración al cargar (junto a las existentes al inicio de `app.js`) y no rompas registros anteriores (por ejemplo, suplementos guardados como texto en lugar de objeto, cafeína sin `mg`).
 - Para productos o valores de inicio que cambian después, usa migraciones que no regresen lo que el usuario ya quitó o editó (ver `caffDefaultsSeen`).
 

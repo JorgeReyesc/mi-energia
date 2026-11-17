@@ -7,7 +7,7 @@
 const SYNC_URL = 'https://utclwftzsyjrxplzdalt.supabase.co'; // proyecto manos-libres, tabla mi_energia_sync
 const SYNC_KEY = 'sb_publishable_ry_cXttEc3PnH8F__sEKhA_Svj-h5gh'; // llave pública: puede ir en el código
 const SYNC_STORE = 'energia.sync';
-const META_PARTS = ['settings', 'customFoods', 'caffProducts', 'experiments'];
+const META_PARTS = ['settings', 'customFoods', 'recipes', 'caffProducts', 'experiments'];
 
 let sync = {};
 try { sync = JSON.parse(localStorage.getItem(SYNC_STORE)) || {}; } catch (e) { sync = {}; }
