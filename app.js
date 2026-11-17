@@ -2,7 +2,7 @@
 
 // ---------- Constantes ----------
 const STORE = 'energia.v1';
-const APP_VERSION = '15'; // igual que CACHE en sw.js
+const APP_VERSION = '16'; // igual que CACHE en sw.js
 const DEFAULT_SETTINGS = {
   waterGoal: 2000, glassMl: 250, sleepGoal: 7.5,
   supplements: ['Multivitamínico', 'Vitamina D', 'Magnesio', 'Omega 3'],
@@ -302,6 +302,9 @@ function fmtQ(q) { return String(Math.round(q * 100) / 100); }
 
 // ---------- Cafeína ----------
 function hmToMin(t) { const [h, m] = (t || '00:00').split(':').map(Number); return h * 60 + m; }
+// Cantidades por toma (fracción de la porción del producto)
+const CAFF_QTY = [[0.25, '¼'], [0.5, '½'], [0.75, '¾'], [1, '1'], [1.5, '1½'], [2, '2'], [3, '3']];
+function qtyLabel(q) { return (CAFF_QTY.find(c => c[0] === q) || [, String(q)])[1]; }
 function entryMg(x) { return (x.mg ?? LEGACY_CAFF_MG[x.kind] ?? 0) * (x.q || 1); }
 // "Paracetamol 500 mg, Fenilefrina 5 mg" → [{ n, mg }]
 function parseOther(s) {
@@ -758,8 +761,10 @@ function caffCard(d) {
     ${others.length ? `<h3>🧪 Otros activos del día</h3>${others.map(([n, mg]) => activeBar(n, mg)).join('')}
       <p class="muted" style="margin:8px 0 0">La línea marca el límite diario o la dosis usual. Referencias generales para adultos; tu médico puede indicarte otra cosa.</p>` : ''}
     <ul class="list">${sortByTime(d.caffeine).map(x => `
-      <li><span class="t">${esc(x.t)}</span><span class="grow">${esc(x.kind)} <span class="muted">${x.u ? esc(x.u) + ' · ' : ''}${Math.round(entryMg(x))} mg</span>${x.t >= LATE_CAFF ? ' <span class="tag neg">tarde</span>' : ''}</span>
-      <button class="link" data-act="del" data-list="caffeine" data-id="${x.id}" aria-label="Borrar">✕</button></li>`).join('')}</ul>` : ''}
+      <li style="align-items:center"><span class="t">${esc(x.t)}</span><span class="grow">${esc(x.kind)} <span class="muted">${x.u ? esc(x.u) + ' · ' : ''}${Math.round(entryMg(x))} mg</span>${x.t >= LATE_CAFF ? ' <span class="tag neg">tarde</span>' : ''}</span>
+      <select data-caff-q="${x.id}" style="width:auto;padding:6px" aria-label="Cantidad">${CAFF_QTY.map(([q, l]) => `<option value="${q}" ${(x.q || 1) === q ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <button class="link" data-act="del" data-list="caffeine" data-id="${x.id}" aria-label="Borrar">✕</button></li>`).join('')}</ul>
+    <p class="muted" style="margin:6px 0 0">Cambia la cantidad si no tomaste la porción completa (por ejemplo ½ scoop). La próxima vez se usa la misma cantidad.</p>` : ''}
   </section>`;
 }
 
@@ -1634,9 +1639,11 @@ document.addEventListener('click', e => {
     case 'caff-add': {
       const p = S.caffProducts.find(p => p.id === el.dataset.id);
       if (!p) return;
-      d.caffeine.push({ id: uid(), t: draft.caff.t || nowHM(), kind: p.n, u: p.u, mg: p.mg, other: p.other || '' });
+      // Usa la última cantidad que tomaste de ese producto (ej. ½ scoop)
+      const q = p.lastQ || 1;
+      d.caffeine.push({ id: uid(), t: draft.caff.t || nowHM(), kind: p.n, u: p.u, mg: p.mg, other: p.other || '', q });
       draft.caff.t = '';
-      return commit(`${p.n} registrado ✓ (${p.mg} mg)`);
+      return commit(`${p.n} registrado ✓ (${q === 1 ? '' : qtyLabel(q) + ' · '}${Math.round(p.mg * q)} mg)`);
     }
     case 'cp-new':
       draft.cp = { id: '', n: '', u: '1 unidad', mg: '', other: '', photo: '', status: '', ocr: '' };
@@ -1819,6 +1826,14 @@ document.addEventListener('change', e => {
     const cur = (S.settings.suppDose[s] ||= { dose: '', unit: 'mg' });
     if (el.dataset.sdose != null) cur.dose = el.value === '' ? '' : +el.value; else cur.unit = el.value;
     commit('Guardado ✓');
+  } else if (el.dataset.caffQ != null) {
+    // Cantidad de una toma de cafeína; se recuerda para la próxima vez de ese producto
+    const x = D().caffeine.find(c => c.id === el.dataset.caffQ);
+    if (!x) return;
+    x.q = +el.value;
+    const p = S.caffProducts.find(p => p.n === x.kind && p.u === x.u);
+    if (p) p.lastQ = x.q;
+    commit();
   } else if (el.dataset.itemQ != null) {
     const it = draft.meal.items[+el.dataset.itemQ];
     if (it && +el.value > 0) it.q = Math.round(+el.value * 100) / 100;
