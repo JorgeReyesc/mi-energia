@@ -181,3 +181,8 @@ pre.ocr { white-space: pre-wrap; font-size: 12px; background: var(--bg); padding
 .sec.open > h2 { margin-bottom: 10px; }
 .sec:not(.open) > :not(h2) { display: none; }
 .sec > h2 .sub { margin-left: auto; }
+
+/* Botón de Google */
+button.google { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; }
+button.google .g { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: #fff; color: #4285f4; font-weight: 800; font-size: 14px; }
+details > summary { cursor: pointer; }
