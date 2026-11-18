@@ -1,6 +1,6 @@
 // Cache de la app para que funcione sin internet.
 // Sube el número de versión cuando cambies algún archivo.
-const CACHE = 'mi-energia-v17';
+const CACHE = 'mi-energia-v18';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './foods.js', './sync.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 // cache: 'reload' evita guardar copias viejas que el navegador tenga en su caché HTTP

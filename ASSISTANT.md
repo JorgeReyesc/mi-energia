@@ -50,6 +50,8 @@ Los dispositivos del usuario combinan su copia con la tuya: **por cada día y ca
 
 1. **Lee** el estado justo antes de modificar.
 2. Cambia **solo** lo necesario. No borres campos que no entiendas.
+   - Si creas un día nuevo, escríbelo **completo**, con todos los campos del ejemplo de abajo (listas vacías `[]`, `supps: {}`, números en `0`, `screens: false`, `notes: ""`), aunque solo vayas a llenar uno.
+   - Si el día ya existe, agrega o cambia dentro de él; no lo reemplaces por un objeto con menos campos.
 3. Por cada día que cambies, pon la hora actual en milisegundos: `_u["d:AAAA-MM-DD"] = Date.now()`. Si cambias una sección, igual: `_u["settings"]`, `_u["recipes"]`, `_u["customFoods"]`, `_u["caffProducts"]`, `_u["experiments"]`.
 4. **Guarda** el estado completo con `mi_energia_put`.
 5. Los cambios aparecen en los dispositivos del usuario la próxima vez que abran la app (o en segundos si la tienen abierta).

@@ -131,6 +131,8 @@ async function syncNow() {
       // para respetar si otro dispositivo ya lo revocó
       const assist = session && merged.settings?.assistCode;
       if (assist) await pull({ kind: 'link', code: assist });
+      // Un asistente pudo guardar días incompletos: se completan antes de usarlos y se suben ya corregidos
+      normalizeDays(merged);
       merged.ui = S.ui;
       const localChanged = strip(merged) !== strip(S);
       S = merged;

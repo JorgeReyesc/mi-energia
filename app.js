@@ -2,7 +2,7 @@
 
 // ---------- Constantes ----------
 const STORE = 'energia.v1';
-const APP_VERSION = '17'; // igual que CACHE en sw.js
+const APP_VERSION = '18'; // igual que CACHE en sw.js
 const DEFAULT_SETTINGS = {
   waterGoal: 2000, glassMl: 250, sleepGoal: 7.5,
   supplements: ['Multivitamínico', 'Vitamina D', 'Magnesio', 'Omega 3'],
@@ -148,6 +148,7 @@ let S;
 try { S = JSON.parse(localStorage.getItem(STORE)); } catch (e) { S = null; }
 if (!S || typeof S !== 'object') S = {};
 S.days ||= {};
+normalizeDays(S);
 S.experiments ||= [];
 S.customFoods ||= [];
 S.recipes ||= [];
@@ -233,11 +234,26 @@ function blankDay() {
     sun: 0, stress: 0, alcohol: 0, screens: false, symptoms: [], notes: '',
   };
 }
+// Completa un día al que le falten campos (por ejemplo, escrito a mano por un asistente vía la API)
+function normalizeDay(d) {
+  const b = blankDay();
+  if (!d || typeof d !== 'object') return b;
+  const out = { ...b, ...d, sleep: { ...b.sleep, ...(d.sleep && typeof d.sleep === 'object' ? d.sleep : {}) } };
+  for (const k of ['checkins', 'meals', 'caffeine', 'exercise', 'symptoms']) if (!Array.isArray(out[k])) out[k] = [];
+  if (!out.supps || typeof out.supps !== 'object' || Array.isArray(out.supps)) out.supps = {};
+  out.meals = out.meals.map(m => ({ type: '', desc: '', t: '', ...m, tags: Array.isArray(m?.tags) ? m.tags : [], items: Array.isArray(m?.items) ? m.items : [] }));
+  out.exercise = out.exercise.map(x => ({ min: 0, int: 2, ...x }));
+  for (const k of ['water', 'sun', 'stress', 'alcohol']) out[k] = +out[k] || 0;
+  return out;
+}
+function normalizeDays(st) {
+  for (const k of Object.keys(st.days || {})) st.days[k] = normalizeDay(st.days[k]);
+}
 function D() { return (S.days[cur] ||= blankDay()); }
 function hasData(d) {
-  return !!d && !!(d.checkins.length || d.meals.length || d.water || d.sleep.bed || d.caffeine.length ||
-    d.exercise.length || Object.keys(d.supps).length || d.stress || d.alcohol || d.sun ||
-    d.symptoms.length || d.notes);
+  return !!d && !!(d.checkins?.length || d.meals?.length || d.water || d.sleep?.bed || d.caffeine?.length ||
+    d.exercise?.length || Object.keys(d.supps || {}).length || d.stress || d.alcohol || d.sun ||
+    d.symptoms?.length || d.notes);
 }
 function sleepHours(s) {
   if (!s.bed || !s.wake) return null;
@@ -475,7 +491,21 @@ function impact(f, rows, o) {
 const view = document.getElementById('view');
 function render() {
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.v === tab));
-  view.innerHTML = { hoy: viewHoy, analisis: viewAnalisis, historial: viewHistorial, ajustes: viewAjustes }[tab]();
+  try {
+    view.innerHTML = { hoy: viewHoy, analisis: viewAnalisis, historial: viewHistorial, ajustes: viewAjustes }[tab]();
+  } catch (e) {
+    // Nunca dejar la pantalla vacía: avisar y permitir ir a Ajustes (respaldo, actualizar)
+    console.error(e);
+    view.innerHTML = `<section class="card"><h2>⚠️ No se pudo mostrar esta pantalla</h2>
+      <p class="muted" style="margin:0">Tus datos no se perdieron. Prueba en Ajustes → Buscar actualización. Detalle: ${esc(e.message)}</p></section>`;
+  }
+}
+// Dibuja una tarjeta; si falla, muestra un aviso en su lugar y el resto de la pantalla sigue funcionando
+function safeCard(fn, d, title) {
+  try { return fn(d); } catch (e) {
+    console.error(e);
+    return `<section class="card"><h2>⚠️ ${esc(title)}</h2><p class="muted" style="margin:0">No se pudo mostrar esta sección. Detalle: ${esc(e.message)}</p></section>`;
+  }
 }
 
 // ----- Hoy -----
@@ -494,7 +524,7 @@ function viewHoy() {
   </div>
   ${[['resumen', summaryCard], ['animo', checkinCard], ['sueno', sleepCard], ['agua', waterCard], ['comidas', mealsCard],
     ['cafeina', caffCard], ['suplementos', suppCard], ['movimiento', activityCard], ['sol', sunCard], ['otros', otherCard]]
-    .map(([id, fn]) => collapsible(id, fn(d))).join('')}`;
+    .map(([id, fn]) => collapsible(id, safeCard(fn, d, id))).join('')}`;
 }
 
 // Convierte una tarjeta en desplegable: el título (con su resumen) abre y cierra; el estado se recuerda
