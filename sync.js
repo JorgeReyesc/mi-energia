@@ -2,6 +2,8 @@
 // ---------- Sincronización entre dispositivos ----------
 // Forma principal: iniciar sesión con Google; cada cuenta solo puede leer y escribir su propia fila
 // (tabla mi_energia_user_data). Alternativa: enlace privado con código (funciones mi_energia_get/put).
+// Con Google activo también puede haber un enlace para un asistente (S.settings.assistCode): esa copia
+// se combina en cada sincronización para que los cambios del asistente lleguen a todos los dispositivos.
 // Cada día y cada sección de ajustes lleva la hora de su último cambio; al combinar gana el más reciente.
 
 const SYNC_URL = 'https://utclwftzsyjrxplzdalt.supabase.co'; // proyecto manos-libres, tabla mi_energia_sync
@@ -74,23 +76,23 @@ function mergeState(L, R) {
 
 function syncReady() { return !!(SYNC_URL && SYNC_KEY); }
 
-// Leer / guardar el estado en el servidor según la forma de sincronizar
-async function remoteGet() {
-  if (syncMode() === 'google') {
+// Leer / guardar el estado en el servidor. Destino: { kind: 'google' } o { kind: 'link', code }
+async function remoteGet(t) {
+  if (t.kind === 'google') {
     const { data, error } = await sb.from('mi_energia_user_data').select('data').maybeSingle();
     if (error) throw error;
     return data?.data ?? null;
   }
-  return rpc('mi_energia_get', { p_key: sync.code });
+  return rpc('mi_energia_get', { p_key: t.code });
 }
-async function remotePut(payload) {
-  if (syncMode() === 'google') {
+async function remotePut(t, payload) {
+  if (t.kind === 'google') {
     const { error } = await sb.from('mi_energia_user_data')
       .upsert({ user_id: session.user.id, data: payload, updated_at: new Date().toISOString() });
     if (error) throw error;
     return;
   }
-  await rpc('mi_energia_put', { p_key: sync.code, p_data: payload });
+  await rpc('mi_energia_put', { p_key: t.code, p_data: payload });
 }
 async function rpc(fn, body) {
   const res = await fetch(`${SYNC_URL}/rest/v1/rpc/${fn}`, {
@@ -115,18 +117,28 @@ async function syncNow() {
   syncing = (async () => {
     setSyncStatus('Sincronizando…');
     try {
-      const remote = await remoteGet();
       const strip = st => JSON.stringify({ ...st, ui: undefined });
       // Se combina con el estado actual (por si capturaste algo mientras llegaba la respuesta)
-      const merged = remote ? mergeState(S, remote) : { ...S };
+      let merged = { ...S };
+      const pulled = [];
+      const pull = async t => {
+        const remote = await remoteGet(t);
+        pulled.push({ t, remote });
+        if (remote) merged = mergeState(merged, remote);
+      };
+      await pull(session ? { kind: 'google' } : { kind: 'link', code: sync.code });
+      // El código del asistente viaja dentro de tus datos; se lee después de combinar con tu cuenta
+      // para respetar si otro dispositivo ya lo revocó
+      const assist = session && merged.settings?.assistCode;
+      if (assist) await pull({ kind: 'link', code: assist });
       merged.ui = S.ui;
       const localChanged = strip(merged) !== strip(S);
       S = merged;
       try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) { /* sin espacio */ }
       takeSnap();
-      if (!remote || strip(remote) !== strip({ ...merged, ui: undefined })) {
-        const { ui, ...payload } = merged;
-        await remotePut(payload);
+      const { ui, ...payload } = merged;
+      for (const { t, remote } of pulled) {
+        if (!remote || strip(remote) !== strip(payload)) await remotePut(t, payload);
       }
       sync.last = Date.now(); saveSync();
       setSyncStatus(`Sincronizado ${new Date(sync.last).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}`);
@@ -155,6 +167,38 @@ function newSyncCode() {
 }
 function syncLink() { return `${location.origin}${location.pathname}#sync=${sync.code}`; }
 
+// Enlace para que un asistente (por ejemplo, una IA) lea y modifique tus datos
+function assistSection() {
+  const code = S.settings.assistCode;
+  if (!code) {
+    return `
+    <h3>🤖 Acceso para un asistente</h3>
+    <p class="muted" style="margin-top:0">Crea un enlace privado para que un asistente (por ejemplo, una IA) pueda leer y modificar tus datos. Sus cambios llegan a tu laptop y a tu teléfono.</p>
+    <button data-act="sync-assist-on">Crear enlace para asistente</button>`;
+  }
+  return `
+    <h3>🤖 Acceso para un asistente<span class="tag" style="margin-left:6px">activo</span></h3>
+    <label class="f">Código<input readonly value="${esc(code)}" onclick="this.select()"></label>
+    <div class="row mt">
+      <button data-act="sync-assist-copy">📋 Copiar instrucciones para el asistente</button>
+      <button class="link danger" data-act="sync-assist-off">Revocar acceso</button>
+    </div>
+    <p class="muted">⚠️ Quien tenga este código puede ver y cambiar todos tus datos, incluidos los de salud. Dáselo solo a tu asistente y revócalo cuando ya no lo necesites.</p>`;
+}
+function assistInstructions(code) {
+  return `Acceso a mis datos de la app "Mi Energía" (registro diario de energía, sueño, comida, cafeína, suplementos y ejercicio).
+
+Código de acceso: ${code}
+
+Instrucciones técnicas (API, formato de datos y reglas para modificar): ${location.origin}${location.pathname}ASSISTANT.md
+
+Resumen:
+- Leer: POST ${SYNC_URL}/rest/v1/rpc/mi_energia_get con encabezados apikey: ${SYNC_KEY} y Content-Type: application/json, cuerpo {"p_key":"${code}"}
+- Guardar: POST ${SYNC_URL}/rest/v1/rpc/mi_energia_put con cuerpo {"p_key":"${code}","p_data":<estado completo>}
+- Antes de guardar, vuelve a leer, cambia solo lo necesario y pon la hora actual (milisegundos) en _u de cada día o sección que modifiques; si no, tu cambio se pierde al sincronizar.
+- Haz cambios solo cuando yo te lo pida.`;
+}
+
 function syncStatusText() {
   return syncStatus || (sync.last ? `Última sincronización: ${new Date(sync.last).toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : 'Pendiente');
 }
@@ -172,6 +216,7 @@ function syncCard() {
       <button data-act="sync-now">🔄 Sincronizar ahora</button>
       <button class="link danger" data-act="sync-logout">Cerrar sesión</button>
     </div>
+    ${assistSection()}
   </section>`;
   }
   const google = sb ? `
@@ -239,6 +284,27 @@ document.addEventListener('click', e => {
         sb.auth.signOut().finally(() => { session = null; syncStatus = ''; render(); });
       }
       return;
+    case 'sync-assist-on':
+      if (!confirm('El asistente podrá ver y modificar todos tus datos. ¿Crear el enlace?')) return;
+      S.settings.assistCode = newSyncCode();
+      save(); syncNow().then(() => render()); render();
+      toast('Enlace para asistente creado ✓');
+      return;
+    case 'sync-assist-copy': {
+      const text = assistInstructions(S.settings.assistCode);
+      navigator.clipboard.writeText(text).then(() => toast('Instrucciones copiadas ✓ Pégalas en tu asistente'),
+        () => { prompt('Copia estas instrucciones:', text); });
+      return;
+    }
+    case 'sync-assist-off': {
+      if (!confirm('¿Revocar el acceso del asistente? Su código dejará de funcionar y se borra su copia en el servidor.')) return;
+      const code = S.settings.assistCode;
+      delete S.settings.assistCode;
+      save();
+      rpc('mi_energia_delete', { p_key: code }).catch(() => {}).finally(() => { syncNow(); render(); });
+      toast('Acceso revocado ✓');
+      return;
+    }
     case 'sync-share':
       if (navigator.share) navigator.share({ title: 'Mi Energía: vincular dispositivo', url: syncLink() }).catch(() => {});
       else navigator.clipboard.writeText(syncLink()).then(() => toast('Enlace copiado ✓'), () => toast('Selecciona y copia el enlace'));

@@ -2,7 +2,7 @@
 
 // ---------- Constantes ----------
 const STORE = 'energia.v1';
-const APP_VERSION = '16'; // igual que CACHE en sw.js
+const APP_VERSION = '17'; // igual que CACHE en sw.js
 const DEFAULT_SETTINGS = {
   waterGoal: 2000, glassMl: 250, sleepGoal: 7.5,
   supplements: ['Multivitamínico', 'Vitamina D', 'Magnesio', 'Omega 3'],

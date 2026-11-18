@@ -34,7 +34,8 @@ PWA personal para registrar el día (ánimo/energía, sueño, agua, comidas con 
 ## Sincronización
 
 - Forma principal: iniciar sesión con Google. Supabase, proyecto **manos-libres** (`utclwftzsyjrxplzdalt`), tabla `public.mi_energia_user_data` con RLS (cada usuario solo su fila).
-- Alternativa sin cuenta: enlace `#sync=código`, tabla `public.mi_energia_sync` y funciones `mi_energia_get` / `mi_energia_put`.
+- Alternativa sin cuenta: enlace `#sync=código`, tabla `public.mi_energia_sync` y funciones `mi_energia_get` / `mi_energia_put` / `mi_energia_delete` (revocar).
+- Acceso para un asistente (IA): con Google activo, `S.settings.assistCode` guarda un código de enlace; cada sincronización combina también esa copia, así lo que cambie el asistente llega a todos los dispositivos. Las instrucciones para el asistente están en `ASSISTANT.md` (público; nunca pongas ahí el código). Si cambias el formato de los datos, actualiza `ASSISTANT.md`.
 - Cada día y sección de ajustes guarda la hora de su último cambio en `S._u`; al combinar gana el más reciente. `S.ui` (secciones abiertas) es de cada dispositivo y no se sincroniza.
 - Cliente OAuth de Google "Mi Energía web" en el proyecto de Google Cloud `mi-energia-515005` (modo prueba).
 - La llave publishable de Supabase en `sync.js` es pública a propósito; nunca pongas secretos (service role, secreto de OAuth) en el código.
